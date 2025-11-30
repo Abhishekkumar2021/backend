@@ -1,37 +1,46 @@
-from typing import Optional, List, Dict, Any
 from datetime import datetime
+from typing import Any
+
 from pydantic import BaseModel
+
 from app.models.db_models import JobStatus
+
 
 class JobLogBase(BaseModel):
     level: str
     message: str
     timestamp: datetime
-    log_metadata: Optional[Dict[str, Any]] = None
+    log_metadata: dict[str, Any] | None = None
 
     class Config:
         from_attributes = True
+
+
+class JobLog(JobLogBase):
+    id: int
+    job_id: int
+
 
 class JobBase(BaseModel):
     pipeline_id: int
     status: JobStatus
 
+
 class JobCreate(JobBase):
     pass
 
+
 class Job(JobBase):
     id: int
-    celery_task_id: Optional[str] = None
-    started_at: Optional[datetime] = None
-    completed_at: Optional[datetime] = None
-    duration_seconds: Optional[float] = None
+    celery_task_id: str | None = None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    duration_seconds: float | None = None
     records_extracted: int
     records_loaded: int
     records_failed: int
-    error_message: Optional[str] = None
+    error_message: str | None = None
     created_at: datetime
-    
-    # Include logs optionally? For now, separate endpoint usually better for logs
-    
+
     class Config:
         from_attributes = True

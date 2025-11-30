@@ -12,12 +12,13 @@ psycopg2-binary
 # Database - Supported Drivers
 pymysql
 pymssql
-cx-Oracle
+oracledb
 pymongo
 redis
 
 # Cloud/Data Warehouse Connectors
 snowflake-connector-python
+snowflake-sqlalchemy
 google-cloud-bigquery
 
 # Task Queue (keeping Celery as alternative to Prefect)
@@ -51,6 +52,7 @@ pytest
 pytest-asyncio
 black
 ruff
+mypy
 
 # File Format Support
 fastparquet

@@ -1,11 +1,14 @@
-from typing import Generic, TypeVar, List, Optional
+from typing import Generic, TypeVar
+
 from pydantic import BaseModel
 
-T = TypeVar('T')
+T = TypeVar("T")
+
 
 class ResponseBase(BaseModel):
     success: bool = True
-    message: Optional[str] = None
+    message: str | None = None
+
 
 class DataResponse(ResponseBase, Generic[T]):
     data: T
