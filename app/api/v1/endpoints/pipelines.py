@@ -23,8 +23,8 @@ def read_pipelines(skip: int = 0, limit: int = 100, db: Session = Depends(get_db
 @router.post("/", response_model=Pipeline, status_code=status.HTTP_201_CREATED)
 def create_pipeline(
     *,
-    db: Session = Depends(get_db),
     pipeline_in: PipelineCreate,
+    db: Session = Depends(get_db),
 ) -> Any:
     """Create a new pipeline.
     """

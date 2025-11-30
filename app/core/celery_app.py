@@ -16,7 +16,14 @@ logger = get_logger(__name__)
 # Get Redis URL from env or default
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
-celery_app = Celery("data_agent", broker=REDIS_URL, backend=REDIS_URL)
+# IMPORTANT FIX:
+# Explicitly include the worker module so Celery registers app.worker.run_pipeline
+celery_app = Celery(
+    "data_agent",
+    broker=REDIS_URL,
+    backend=REDIS_URL,
+    include=["app.worker"],  # <-- THIS FIXES THE ERROR
+)
 
 celery_app.conf.update(
     task_serializer="json",
@@ -31,14 +38,14 @@ celery_app.conf.update(
     task_time_limit=3600,  # Hard limit: 1 hour per task
     task_soft_time_limit=3300,  # Soft limit: 55 minutes (warn before kill)
     worker_max_tasks_per_child=1000,  # Restart worker after N tasks (prevent memory leaks)
-    # Configure Celery Beat to use our custom scheduler
+
+    # Custom scheduler class
     beat_scheduler="app.core.celery_scheduler.DatabaseScheduler",
     beat_max_loop_interval=5,  # Poll for schedule changes every 5 seconds
 )
 
 
 # Celery Signal Handlers
-
 @task_prerun.connect
 def task_prerun_handler(task_id, task, *args, **kwargs):
     """Log when a task starts."""
@@ -61,8 +68,5 @@ def task_failure_handler(task_id, exception, *args, **kwargs):
         exc_info=True
     )
 
-
-# Task auto-discovery
-celery_app.autodiscover_tasks(["app"])
 
 logger.info("Celery app configured: broker=%s", REDIS_URL)
