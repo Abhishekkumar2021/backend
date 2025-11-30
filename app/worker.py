@@ -10,18 +10,16 @@ from typing import Optional
 from app.connectors.base import ConnectorFactory, State
 from app.core.celery_app import celery_app
 from app.core.database import SessionLocal
-from app.models.db_models import JobStatus, Pipeline, SystemConfig, PipelineState
+from app.models.database import JobStatus, Pipeline, SystemConfig, PipelineState
 from app.pipeline.engine import PipelineEngine
-from app.pipeline.processors import (
-    NoOpProcessor,
-    BaseProcessor,
-    ExampleTransformerProcessor,
-    DuckDBProcessor,
-)
+from app.pipeline.processors.base import BaseProcessor
+from app.pipeline.processors.noop import NoOpProcessor
+from app.pipeline.processors.transformer import ExampleTransformerProcessor
+from app.pipeline.processors.sql import DuckDBProcessor
 from app.services.encryption import get_encryption_service, initialize_encryption_service
 from app.services.job_service import JobService
 from app.services.alert_service import AlertService
-from app.utils.logging import get_logger
+from app.core.logging import get_logger
 
 logger = get_logger(__name__)
 

@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from app.api import deps
 from app.api.v1.endpoints.connections import get_decrypted_config
 from app.connectors.factory import ConnectorFactory
-from app.models import db_models
+from app.models import database
 from app.services.cache import get_cache
 
 router = APIRouter()
@@ -70,7 +70,7 @@ def scan_connection_metadata(
     Query params:
     - force: If true, bypass cache and re-scan
     """
-    connection = db.query(db_models.Connection).filter(db_models.Connection.id == connection_id).first()
+    connection = db.query(database.Connection).filter(database.Connection.id == connection_id).first()
 
     if not connection:
         raise HTTPException(
@@ -149,7 +149,7 @@ def _update_metadata_cache(
     try:
         # Check if cache entry exists
         cache_entry = (
-            db.query(db_models.MetadataCache).filter(db_models.MetadataCache.connection_id == connection_id).first()
+            db.query(database.MetadataCache).filter(database.MetadataCache.connection_id == connection_id).first()
         )
 
         if cache_entry:
@@ -161,7 +161,7 @@ def _update_metadata_cache(
             cache_entry.scan_duration_seconds = duration
         else:
             # Create new
-            cache_entry = db_models.MetadataCache(
+            cache_entry = database.MetadataCache(
                 connection_id=connection_id,
                 schema_data=schema_data,
                 table_count=table_count,
@@ -186,7 +186,7 @@ def get_connection_metadata(connection_id: int, db: Session = Depends(deps.get_d
     Returns data from Redis cache or database cache
     Does NOT trigger a new scan - use /scan endpoint for that
     """
-    connection = db.query(db_models.Connection).filter(db_models.Connection.id == connection_id).first()
+    connection = db.query(database.Connection).filter(database.Connection.id == connection_id).first()
 
     if not connection:
         raise HTTPException(
@@ -201,7 +201,7 @@ def get_connection_metadata(connection_id: int, db: Session = Depends(deps.get_d
         return {"connection_id": connection_id, "source": "redis_cache", **cached_schema}
 
     # Try database cache
-    db_cache = db.query(db_models.MetadataCache).filter(db_models.MetadataCache.connection_id == connection_id).first()
+    db_cache = db.query(database.MetadataCache).filter(database.MetadataCache.connection_id == connection_id).first()
 
     if db_cache:
         # Restore to Redis cache
@@ -335,7 +335,7 @@ def clear_metadata_cache(connection_id: int, db: Session = Depends(deps.get_db))
 
     Forces next scan to be fresh
     """
-    connection = db.query(db_models.Connection).filter(db_models.Connection.id == connection_id).first()
+    connection = db.query(database.Connection).filter(database.Connection.id == connection_id).first()
 
     if not connection:
         raise HTTPException(
@@ -347,7 +347,7 @@ def clear_metadata_cache(connection_id: int, db: Session = Depends(deps.get_db))
     cache.invalidate_schema(connection_id)
 
     # Clear database cache
-    db_cache = db.query(db_models.MetadataCache).filter(db_models.MetadataCache.connection_id == connection_id).first()
+    db_cache = db.query(database.MetadataCache).filter(database.MetadataCache.connection_id == connection_id).first()
 
     if db_cache:
         db.delete(db_cache)

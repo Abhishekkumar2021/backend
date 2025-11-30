@@ -3,7 +3,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from app.models.db_models import ConnectorType
+from app.models.database import ConnectorType
 
 
 class ConnectionBase(BaseModel):

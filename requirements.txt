@@ -46,6 +46,7 @@ prefect
 python-dotenv
 httpx
 websockets
+structlog
 
 # Development & Testing
 pytest

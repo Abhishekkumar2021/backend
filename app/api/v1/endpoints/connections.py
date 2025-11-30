@@ -10,8 +10,8 @@ from sqlalchemy.orm import Session
 from app.api import deps
 from app.connectors.base import ConnectionTestResult, Schema # Import Schema for response model
 from app.connectors.factory import ConnectorFactory
-from app.models import db_models
-from app.models.db_models import MetadataCache # Import MetadataCache for schema caching
+from app.models import database
+from app.models.database import MetadataCache # Import MetadataCache for schema caching
 from app.schemas import connection as schemas
 from app.services.cache import get_cache
 from app.services.encryption import get_encryption_service
@@ -19,7 +19,7 @@ from app.services.encryption import get_encryption_service
 router = APIRouter()
 
 
-def get_decrypted_config(connection: db_models.Connection) -> dict:
+def get_decrypted_config(connection: database.Connection) -> dict:
     """Helper: Get decrypted config with Redis caching
     Avoids repeated decryption operations
     """
@@ -59,10 +59,10 @@ def list_connections(skip: int = 0, limit: int = 100, is_source: bool = None, db
     - limit: Max records to return
     - is_source: Filter by source (True) or destination (False)
     """
-    query = db.query(db_models.Connection)
+    query = db.query(database.Connection)
 
     if is_source is not None:
-        query = query.filter(db_models.Connection.is_source == is_source)
+        query = query.filter(database.Connection.is_source == is_source)
 
     connections = query.offset(skip).limit(limit).all()
     return connections
@@ -75,7 +75,7 @@ def create_connection(connection_in: schemas.ConnectionCreate, db: Session = Dep
     Config will be encrypted before storage
     """
     # Check if connection with same name exists
-    existing = db.query(db_models.Connection).filter(db_models.Connection.name == connection_in.name).first()
+    existing = db.query(database.Connection).filter(database.Connection.name == connection_in.name).first()
 
     if existing:
         raise HTTPException(
@@ -96,7 +96,7 @@ def create_connection(connection_in: schemas.ConnectionCreate, db: Session = Dep
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Encryption failed: {e!s}")
 
     # Create DB object
-    db_obj = db_models.Connection(
+    db_obj = database.Connection(
         name=connection_in.name,
         connector_type=connection_in.connector_type,
         description=connection_in.description,
@@ -114,7 +114,7 @@ def create_connection(connection_in: schemas.ConnectionCreate, db: Session = Dep
 @router.get("/{connection_id}", response_model=schemas.Connection)
 def get_connection(connection_id: int, db: Session = Depends(deps.get_db)):
     """Get connection by ID"""
-    connection = db.query(db_models.Connection).filter(db_models.Connection.id == connection_id).first()
+    connection = db.query(database.Connection).filter(database.Connection.id == connection_id).first()
 
     if not connection:
         raise HTTPException(
@@ -134,7 +134,7 @@ def update_connection(
     Config will be re-encrypted if provided
     Cache will be invalidated
     """
-    connection = db.query(db_models.Connection).filter(db_models.Connection.id == connection_id).first()
+    connection = db.query(database.Connection).filter(database.Connection.id == connection_id).first()
 
     if not connection:
         raise HTTPException(
@@ -145,8 +145,8 @@ def update_connection(
     if connection_update.name is not None:
         # Check for name conflicts
         existing = (
-            db.query(db_models.Connection)
-            .filter(db_models.Connection.name == connection_update.name, db_models.Connection.id != connection_id)
+            db.query(database.Connection)
+            .filter(database.Connection.name == connection_update.name, database.Connection.id != connection_id)
             .first()
         )
 
@@ -188,7 +188,7 @@ def delete_connection(connection_id: int, db: Session = Depends(deps.get_db)):
     Will fail if connection is used in active pipelines
     Cache will be invalidated
     """
-    connection = db.query(db_models.Connection).filter(db_models.Connection.id == connection_id).first()
+    connection = db.query(database.Connection).filter(database.Connection.id == connection_id).first()
 
     if not connection:
         raise HTTPException(
@@ -197,11 +197,11 @@ def delete_connection(connection_id: int, db: Session = Depends(deps.get_db)):
 
     # Check if used in pipelines
     active_pipelines = (
-        db.query(db_models.Pipeline)
+        db.query(database.Pipeline)
         .filter(
-            (db_models.Pipeline.source_connection_id == connection_id)
-            | (db_models.Pipeline.destination_connection_id == connection_id),
-            db_models.Pipeline.status == db_models.PipelineStatus.ACTIVE,
+            (database.Pipeline.source_connection_id == connection_id)
+            | (database.Pipeline.destination_connection_id == connection_id),
+            database.Pipeline.status == database.PipelineStatus.ACTIVE,
         )
         .count()
     )
@@ -234,7 +234,7 @@ def test_connection(
     Results are cached for 5 minutes unless force=true
     Updates last_test_at, last_test_success, and last_test_error fields
     """
-    connection = db.query(db_models.Connection).filter(db_models.Connection.id == connection_id).first()
+    connection = db.query(database.Connection).filter(database.Connection.id == connection_id).first()
 
     if not connection:
         raise HTTPException(
@@ -300,7 +300,7 @@ def get_connection_config(connection_id: int, db: Session = Depends(deps.get_db)
     Use only for debugging/admin purposes
     Config is cached for 30 minutes
     """
-    connection = db.query(db_models.Connection).filter(db_models.Connection.id == connection_id).first()
+    connection = db.query(database.Connection).filter(database.Connection.id == connection_id).first()
 
     if not connection:
         raise HTTPException(
@@ -324,7 +324,7 @@ def invalidate_connection_cache(connection_id: int, db: Session = Depends(deps.g
 
     Useful after external changes (password rotation, schema changes, etc.)
     """
-    connection = db.query(db_models.Connection).filter(db_models.Connection.id == connection_id).first()
+    connection = db.query(database.Connection).filter(database.Connection.id == connection_id).first()
 
     if not connection:
         raise HTTPException(
@@ -352,7 +352,7 @@ def discover_connection_schema(
     Attempts to connect to the source and retrieve its schema (tables, columns).
     Results are cached to improve performance.
     """
-    connection = db.query(db_models.Connection).filter(db_models.Connection.id == connection_id).first()
+    connection = db.query(database.Connection).filter(database.Connection.id == connection_id).first()
 
     if not connection:
         raise HTTPException(

@@ -6,9 +6,9 @@ from typing import Optional, List
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 
-from app.models.db_models import Pipeline, PipelineStatus, PipelineVersion
+from app.models.database import Pipeline, PipelineStatus, PipelineVersion
 from app.schemas.pipeline import PipelineCreate, PipelineUpdate
-from app.utils.logging import get_logger
+from app.core.logging import get_logger
 
 logger = get_logger(__name__)
 

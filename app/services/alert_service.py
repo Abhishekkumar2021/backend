@@ -3,7 +3,7 @@ import os # Import os for environment variables in case needed for recipients or
 
 from sqlalchemy.orm import Session
 
-from app.models.db_models import Alert, AlertConfig, AlertStatus, AlertType, AlertDeliveryMethod, AlertLevel
+from app.models.database import Alert, AlertConfig, AlertStatus, AlertType, AlertDeliveryMethod, AlertLevel
 from app.schemas.alert import AlertCreate, AlertConfigCreate, AlertConfigUpdate, AlertUpdate
 
 

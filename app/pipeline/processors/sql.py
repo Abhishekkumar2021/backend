@@ -1,52 +1,12 @@
-"""Data Processors for Pipeline Engine
-This module contains various data processing utilities that can be applied
-between the source extraction and destination loading phases of a pipeline.
-"""
-
+from app.pipeline.processors.base import BaseProcessor
+from app.connectors.base import Record
 from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Any
 import duckdb # Import duckdb
 import pandas as pd # DuckDB works well with Pandas
-from datetime import datetime
 
 from app.connectors.base import Record
-
-
-class BaseProcessor:
-    """Base class for all data processors."""
-
-    def process(self, records: Iterator[Record]) -> Iterator[Record]:
-        """
-        Processes an iterator of records and yields transformed records.
-        """
-        for record in records:
-            yield self.transform_record(record)
-
-    def transform_record(self, record: Record) -> Record:
-        """
-        Applies transformations to a single record.
-        This method should be overridden by concrete processor implementations.
-        """
-        return record
-
-
-class NoOpProcessor(BaseProcessor):
-    """A processor that does nothing, effectively passing records through."""
-
-    def transform_record(self, record: Record) -> Record:
-        return record
-
-
-class ExampleTransformerProcessor(BaseProcessor):
-    """
-    An example processor that adds a timestamp to each record's data.
-    """
-
-    def transform_record(self, record: Record) -> Record:
-        record.data["processed_at"] = datetime.utcnow().isoformat()
-        return record
-
 
 @dataclass
 class DuckDBProcessor(BaseProcessor):

@@ -3,7 +3,7 @@
 
 from fastapi import APIRouter
 
-from app.api.v1.endpoints import connections, jobs, metadata, pipelines, system, ws, alerts
+from app.api.v1.endpoints import connections, jobs, metadata, pipelines, system, websocket, alerts
 
 api_router = APIRouter()
 
@@ -26,4 +26,4 @@ api_router.include_router(jobs.router, prefix="/jobs", tags=["jobs"])
 api_router.include_router(alerts.router, prefix="/alerts", tags=["alerts"])
 
 # WebSockets
-api_router.include_router(ws.router)
+api_router.include_router(websocket.router)

@@ -6,11 +6,11 @@ from typing import Optional, List, Dict, Any
 
 from sqlalchemy.orm import Session
 
-from app.models.db_models import Job, JobLog, JobStatus
+from app.models.database import Job, JobLog, JobStatus
 from app.schemas.job import Job as JobSchema
 from app.schemas.job import JobCreate
 from app.services.cache import get_cache
-from app.utils.logging import get_logger
+from app.core.logging import get_logger
 
 logger = get_logger(__name__)
 

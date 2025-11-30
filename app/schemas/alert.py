@@ -3,7 +3,7 @@ from typing import Any, Optional
 
 from pydantic import BaseModel
 
-from app.models.db_models import AlertDeliveryMethod, AlertLevel, AlertStatus, AlertType
+from app.models.database import AlertDeliveryMethod, AlertLevel, AlertStatus, AlertType
 
 
 # Shared properties

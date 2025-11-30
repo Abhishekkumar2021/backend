@@ -3,29 +3,29 @@ Import this module to register all available connectors
 """
 
 from app.connectors.base import ConnectorFactory
-from app.connectors.destinations.filesystem import FileSystemDestination
-from app.connectors.destinations.mssql import MSSQLDestination
-from app.connectors.destinations.mysql import MySQLDestination
-from app.connectors.destinations.oracle import OracleDestination
-from app.connectors.destinations.postgresql import PostgreSQLDestination
-from app.connectors.destinations.s3 import S3Destination
-from app.connectors.destinations.sqlite import SQLiteDestination
-from app.connectors.destinations.mongodb import MongoDBDestination
-from app.connectors.destinations.snowflake import SnowflakeDestination
-from app.connectors.destinations.bigquery import BigQueryDestination
-from app.connectors.destinations.singer import SingerDestination # Import Singer Destination
+from app.connectors.destinations.file.filesystem import FileSystemDestination
+from app.connectors.destinations.sql.mssql import MSSQLDestination
+from app.connectors.destinations.sql.mysql import MySQLDestination
+from app.connectors.destinations.sql.oracle import OracleDestination
+from app.connectors.destinations.sql.postgresql import PostgreSQLDestination
+from app.connectors.destinations.cloud.s3 import S3Destination
+from app.connectors.destinations.sql.sqlite import SQLiteDestination
+from app.connectors.destinations.nosql.mongodb import MongoDBDestination
+from app.connectors.destinations.cloud.snowflake import SnowflakeDestination
+from app.connectors.destinations.cloud.bigquery import BigQueryDestination
+from app.connectors.destinations.integration.singer import SingerDestination
 
-from app.connectors.sources.filesystem import FileSystemSource
-from app.connectors.sources.mssql import MSSQLSource
-from app.connectors.sources.mysql import MySQLSource
-from app.connectors.sources.oracle import OracleSource
-from app.connectors.sources.postgresql import PostgreSQLSource
-from app.connectors.sources.s3 import S3Source
-from app.connectors.sources.sqlite import SQLiteSource
-from app.connectors.sources.mongodb import MongoDBSource
-from app.connectors.sources.snowflake import SnowflakeSource
-from app.connectors.sources.bigquery import BigQuerySource
-from app.connectors.sources.singer import SingerSource # Import Singer Source
+from app.connectors.sources.file.filesystem import FileSystemSource
+from app.connectors.sources.sql.mssql import MSSQLSource
+from app.connectors.sources.sql.mysql import MySQLSource
+from app.connectors.sources.sql.oracle import OracleSource
+from app.connectors.sources.sql.postgresql import PostgreSQLSource
+from app.connectors.sources.cloud.s3 import S3Source
+from app.connectors.sources.sql.sqlite import SQLiteSource
+from app.connectors.sources.nosql.mongodb import MongoDBSource
+from app.connectors.sources.cloud.snowflake import SnowflakeSource
+from app.connectors.sources.cloud.bigquery import BigQuerySource
+from app.connectors.sources.integration.singer import SingerSource
 
 
 def register_all_connectors():

@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_db
 from app.schemas.alert import Alert, AlertConfig, AlertConfigCreate, AlertConfigUpdate, AlertCreate, AlertUpdate
 from app.services.alert_service import AlertService
-from app.models.db_models import AlertType, AlertStatus, AlertLevel
+from app.models.database import AlertType, AlertStatus, AlertLevel
 
 router = APIRouter()
 

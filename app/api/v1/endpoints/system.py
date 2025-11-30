@@ -3,7 +3,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.api import deps
-from app.models import db_models
+from app.models import database
 from app.services.encryption import MasterPasswordManager, initialize_encryption_service
 
 router = APIRouter()
@@ -24,7 +24,7 @@ def initialize_system(request: InitSystemRequest, db: Session = Depends(deps.get
     This generates the DEK, encrypts it, and stores it in the DB.
     """
     # Check if already initialized
-    existing_config = db.query(db_models.SystemConfig).filter(db_models.SystemConfig.key == "encrypted_dek").first()
+    existing_config = db.query(database.SystemConfig).filter(database.SystemConfig.key == "encrypted_dek").first()
     if existing_config:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="System already initialized")
 
@@ -32,10 +32,10 @@ def initialize_system(request: InitSystemRequest, db: Session = Depends(deps.get
     result = MasterPasswordManager.initialize_system(request.master_password)
 
     # Store in DB
-    dek_config = db_models.SystemConfig(
+    dek_config = database.SystemConfig(
         key="encrypted_dek", value=result["encrypted_dek"], description="Encrypted Data Encryption Key"
     )
-    salt_config = db_models.SystemConfig(key="dek_salt", value=result["salt"], description="Salt for DEK encryption")
+    salt_config = database.SystemConfig(key="dek_salt", value=result["salt"], description="Salt for DEK encryption")
 
     db.add(dek_config)
     db.add(salt_config)
@@ -53,8 +53,8 @@ def unlock_system(request: InitSystemRequest, db: Session = Depends(deps.get_db)
     Loads the DEK into memory for the encryption service.
     """
     # Get encrypted DEK and salt from DB
-    dek_config = db.query(db_models.SystemConfig).filter(db_models.SystemConfig.key == "encrypted_dek").first()
-    salt_config = db.query(db_models.SystemConfig).filter(db_models.SystemConfig.key == "dek_salt").first()
+    dek_config = db.query(database.SystemConfig).filter(database.SystemConfig.key == "encrypted_dek").first()
+    salt_config = db.query(database.SystemConfig).filter(database.SystemConfig.key == "dek_salt").first()
 
     if not dek_config or not salt_config:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="System not initialized")

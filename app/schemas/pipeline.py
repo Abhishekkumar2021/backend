@@ -3,7 +3,7 @@ from typing import Any, Optional
 
 from pydantic import BaseModel
 
-from app.models.db_models import PipelineStatus
+from app.models.database import PipelineStatus
 
 
 class PipelineBase(BaseModel):

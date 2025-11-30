@@ -9,7 +9,7 @@ import os
 from celery import Celery
 from celery.signals import task_prerun, task_postrun, task_failure
 
-from app.utils.logging import get_logger
+from app.core.logging import get_logger
 
 logger = get_logger(__name__)
 

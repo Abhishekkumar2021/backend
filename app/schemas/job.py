@@ -3,7 +3,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from app.models.db_models import JobStatus
+from app.models.database import JobStatus
 
 
 class JobLogBase(BaseModel):

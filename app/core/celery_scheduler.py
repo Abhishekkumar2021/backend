@@ -14,8 +14,8 @@ from celery.schedules import crontab
 from sqlalchemy.orm import Session
 
 from app.core.database import SessionLocal
-from app.models.db_models import Pipeline, PipelineStatus
-from app.utils.logging import get_logger
+from app.models.database import Pipeline, PipelineStatus
+from app.core.logging import get_logger
 
 logger = get_logger(__name__)
 
