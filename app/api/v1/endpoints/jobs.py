@@ -7,7 +7,7 @@ from sqlalchemy import func
 from app.api.deps import get_db
 from app.schemas.job import Job as JobSchema, JobCreate, JobLog
 from app.services.job_service import JobService
-from app.core.celery_app import celery_app
+from app.worker.app import celery_app
 from app.models.database import Pipeline, JobStatus
 from app.models.database import Job
 

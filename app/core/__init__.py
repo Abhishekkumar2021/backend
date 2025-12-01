@@ -1,8 +1,12 @@
-"""Core application components."""
+"""Core module initialization.
 
+Exports commonly used core components.
+"""
+
+# Import settings first (without triggering validation errors)
 from app.core.config import settings
-from app.core.database import SessionLocal, engine
-from app.core.logging import get_logger, setup_logging
+
+# Only import other modules after settings is loaded
 from app.core.exceptions import (
     DataAgentException,
     ConfigurationError,
@@ -14,15 +18,10 @@ from app.core.exceptions import (
     PipelineExecutionError,
     StateManagementError,
     ValidationError,
-    CacheError,
 )
 
 __all__ = [
     "settings",
-    "SessionLocal",
-    "engine",
-    "get_logger",
-    "setup_logging",
     "DataAgentException",
     "ConfigurationError",
     "EncryptionError",
@@ -33,5 +32,4 @@ __all__ = [
     "PipelineExecutionError",
     "StateManagementError",
     "ValidationError",
-    "CacheError",
 ]
