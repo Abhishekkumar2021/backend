@@ -7,7 +7,11 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from typing import Any
+from typing import Any, Type, Dict, Tuple
+
+# Assuming BaseConnectorConfig is defined in a schemas file
+# We will explicitly import it in factory.py when registering connectors
+# from pydantic import BaseModel
 
 
 class DataType(str, Enum):
@@ -111,7 +115,7 @@ class SourceConnector(ABC):
     Implements data extraction from various systems
     """
 
-    def __init__(self, config: dict[str, Any]):
+    def __init__(self, config: Any): # Changed to Any temporarily, will be specific Pydantic model
         """Initialize connector with configuration
 
         Args:
@@ -190,7 +194,7 @@ class DestinationConnector(ABC):
     Implements data loading to various systems
     """
 
-    def __init__(self, config: dict[str, Any]):
+    def __init__(self, config: Any): # Changed to Any temporarily, will be specific Pydantic model
         """Initialize connector with configuration
 
         Args:
@@ -200,7 +204,9 @@ class DestinationConnector(ABC):
         self.config = config
         self._connection = None
         self._batch = []
-        self._batch_size = config.get("batch_size", 1000)
+        # _batch_size will now come from config object
+        self._batch_size = config.batch_size
+
 
     @abstractmethod
     def test_connection(self) -> ConnectionTestResult:
@@ -261,27 +267,27 @@ class ConnectorFactory:
     """Factory for creating connector instances
     Dynamically loads connector classes based on type
     """
-
-    _source_connectors: dict[str, type] = {}
-    _destination_connectors: dict[str, type] = {}
-
-    @classmethod
-    def register_source(cls, connector_type: str, connector_class: type):
-        """Register a source connector class"""
-        cls._source_connectors[connector_type] = connector_class
+    
+    _source_connectors: Dict[str, Tuple[Type[SourceConnector], Type]] = {}
+    _destination_connectors: Dict[str, Tuple[Type[DestinationConnector], Type]] = {}
 
     @classmethod
-    def register_destination(cls, connector_type: str, connector_class: type):
-        """Register a destination connector class"""
-        cls._destination_connectors[connector_type] = connector_class
+    def register_source(cls, connector_type: str, connector_class: Type[SourceConnector], config_model: Type):
+        """Register a source connector class with its config model"""
+        cls._source_connectors[connector_type] = (connector_class, config_model)
 
     @classmethod
-    def create_source(cls, connector_type: str, config: dict[str, Any]) -> SourceConnector:
+    def register_destination(cls, connector_type: str, connector_class: Type[DestinationConnector], config_model: Type):
+        """Register a destination connector class with its config model"""
+        cls._destination_connectors[connector_type] = (connector_class, config_model)
+
+    @classmethod
+    def create_source(cls, connector_type: str, config: Dict[str, Any]) -> SourceConnector:
         """Create source connector instance
 
         Args:
             connector_type: Type of connector (postgresql, mysql, etc.)
-            config: Connection configuration
+            config: Connection configuration dictionary
 
         Returns:
             SourceConnector instance
@@ -290,16 +296,18 @@ class ConnectorFactory:
         if connector_type not in cls._source_connectors:
             raise ValueError(f"Unknown source connector type: {connector_type}")
 
-        connector_class = cls._source_connectors[connector_type]
-        return connector_class(config)
+        connector_class, config_model = cls._source_connectors[connector_type]
+        # Validate and convert config dictionary to Pydantic model
+        validated_config = config_model(**config)
+        return connector_class(validated_config)
 
     @classmethod
-    def create_destination(cls, connector_type: str, config: dict[str, Any]) -> DestinationConnector:
+    def create_destination(cls, connector_type: str, config: Dict[str, Any]) -> DestinationConnector:
         """Create destination connector instance
 
         Args:
             connector_type: Type of connector
-            config: Connection configuration
+            config: Connection configuration dictionary
 
         Returns:
             DestinationConnector instance
@@ -308,8 +316,10 @@ class ConnectorFactory:
         if connector_type not in cls._destination_connectors:
             raise ValueError(f"Unknown destination connector type: {connector_type}")
 
-        connector_class = cls._destination_connectors[connector_type]
-        return connector_class(config)
+        connector_class, config_model = cls._destination_connectors[connector_type]
+        # Validate and convert config dictionary to Pydantic model
+        validated_config = config_model(**config)
+        return connector_class(validated_config)
 
     @classmethod
     def list_sources(cls) -> list[str]:

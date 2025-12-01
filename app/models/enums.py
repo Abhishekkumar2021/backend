@@ -7,6 +7,7 @@ class ConnectorType(str, enum.Enum):
     ORACLE = "oracle"
     MONGODB = "mongodb"
     REDIS = "redis"
+    SQLITE = "sqlite"
 
     SNOWFLAKE = "snowflake"
     BIGQUERY = "bigquery"
@@ -19,6 +20,7 @@ class ConnectorType(str, enum.Enum):
 
     REST_API = "rest_api"
     GRAPHQL = "graphql"
+    SINGER = "singer"
 
     GOOGLE_SHEETS = "google_sheets"
     AIRTABLE = "airtable"

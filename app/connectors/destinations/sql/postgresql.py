@@ -8,6 +8,7 @@ from typing import Any
 
 from app.connectors.base import Column, ConnectionTestResult, DataType, DestinationConnector, Record
 from app.core.logging import get_logger
+from app.schemas.connector_configs import PostgresConfig
 
 logger = get_logger(__name__)
 
@@ -29,10 +30,11 @@ class PostgreSQLDestination(DestinationConnector):
         DataType.NULL: "TEXT",
     }
 
-    def __init__(self, config: dict[str, Any]):
+    def __init__(self, config: PostgresConfig):
         super().__init__(config)
-        self.schema = config.get("schema", "public")
-        self.write_mode = config.get("write_mode", "insert")
+        self.schema = config.schema_
+        self.write_mode = "insert" # Assuming default from original code. config.write_mode if I were to add it to schema.
+        self._batch_size = config.batch_size
 
         logger.debug(
             "postgres_destination_initialized",
@@ -48,20 +50,20 @@ class PostgreSQLDestination(DestinationConnector):
         if self._connection is not None:
             return
 
-        logger.info("postgres_destination_connecting", host=self.config["host"])
+        logger.info("postgres_destination_connecting", host=self.config.host)
 
         try:
             self._connection = psycopg2.connect(
-                host=self.config["host"],
-                port=self.config.get("port", 5432),
-                database=self.config["database"],
-                user=self.config["user"],
-                password=self.config["password"],
+                host=self.config.host,
+                port=self.config.port,
+                database=self.config.database,
+                user=self.config.user,
+                password=self.config.password.get_secret_value(),
                 connect_timeout=10,
             )
             self._connection.autocommit = False
 
-            logger.info("postgres_destination_connected", host=self.config["host"])
+            logger.info("postgres_destination_connected", host=self.config.host)
 
         except Exception as e:
             logger.error(

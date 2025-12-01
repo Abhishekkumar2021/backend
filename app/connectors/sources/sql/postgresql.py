@@ -12,6 +12,7 @@ from app.connectors.base import (
     Record, Schema, SourceConnector, State, Table
 )
 from app.core.logging import get_logger
+from app.schemas.connector_configs import PostgresConfig
 
 logger = get_logger(__name__)
 
@@ -45,16 +46,16 @@ class PostgreSQLSource(SourceConnector):
         "bytea": DataType.BINARY,
     }
 
-    def __init__(self, config: dict[str, Any]):
+    def __init__(self, config: PostgresConfig):
         super().__init__(config)
-        self.schema = config.get("schema", "public")
-        self._batch_size = config.get("batch_size", 1000)
+        self.schema = config.schema_
+        self._batch_size = config.batch_size
         self._connection = None
 
         logger.debug(
             "postgres_source_initialized",
-            host=config.get("host"),
-            database=config.get("database"),
+            host=config.host,
+            database=config.database,
             schema=self.schema,
             batch_size=self._batch_size,
         )
@@ -68,25 +69,25 @@ class PostgreSQLSource(SourceConnector):
 
         logger.info(
             "postgres_connect_requested",
-            host=self.config.get("host"),
-            port=self.config.get("port"),
-            database=self.config.get("database"),
+            host=self.config.host,
+            port=self.config.port,
+            database=self.config.database,
         )
 
         try:
             self._connection = psycopg2.connect(
-                host=self.config["host"],
-                port=self.config.get("port", 5432),
-                database=self.config["database"],
-                user=self.config["user"],
-                password=self.config["password"],
+                host=self.config.host,
+                port=self.config.port,
+                database=self.config.database,
+                user=self.config.user,
+                password=self.config.password.get_secret_value(),
                 connect_timeout=10,
             )
 
             logger.info(
                 "postgres_connect_success",
-                host=self.config["host"],
-                database=self.config["database"],
+                host=self.config.host,
+                database=self.config.database,
             )
 
         except Exception as e:
@@ -121,8 +122,8 @@ class PostgreSQLSource(SourceConnector):
     def test_connection(self) -> ConnectionTestResult:
         logger.info(
             "postgres_test_connection_requested",
-            host=self.config.get("host"),
-            database=self.config.get("database"),
+            host=self.config.host,
+            database=self.config.database,
         )
 
         try:
@@ -165,7 +166,7 @@ class PostgreSQLSource(SourceConnector):
         logger.info(
             "postgres_schema_discovery_requested",
             schema=self.schema,
-            database=self.config.get("database"),
+            database=self.config.database,
         )
 
         self.connect()

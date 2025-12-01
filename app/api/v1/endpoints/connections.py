@@ -24,6 +24,9 @@ from app.schemas.connection import (
     Connection as ConnectionSchema,
     ConnectionCreate,
     ConnectionUpdate,
+    ConnectionConfigResponse,
+    ConnectionTestResponse,
+    CacheInvalidationResponse,
 )
 from app.services.cache import get_cache
 from app.services.encryption import get_encryption_service
@@ -501,7 +504,7 @@ def delete_connection(
 
 @router.post(
     "/{connection_id}/test",
-    response_model=Dict[str, Any],
+    response_model=ConnectionTestResponse,
     summary="Test connection",
 )
 def test_connection(
@@ -611,12 +614,15 @@ def test_connection(
         "success": test_result.success,
         "message": test_result.message,
         "metadata": test_result.metadata,
-        "tested_at": test_result.tested_at.isoformat(),
+        "tested_at": test_result.tested_at,
         "cached": False,
     }
 
     # Cache result for 5 minutes
-    cache.set_test_result(connection_id, result)
+    # Note: We cache the dictionary representation, including ISO format date for JSON serialization in cache
+    cache_data = result.copy()
+    cache_data["tested_at"] = result["tested_at"].isoformat()
+    cache.set_test_result(connection_id, cache_data)
     
     logger.info(
         "connection_test_completed",
@@ -775,7 +781,7 @@ def discover_connection_schema(
 
 @router.get(
     "/{connection_id}/config",
-    response_model=Dict[str, Any],
+    response_model=ConnectionConfigResponse,
     summary="Get connection config (masked)",
 )
 def get_connection_config(
@@ -831,7 +837,7 @@ def get_connection_config(
 
 @router.post(
     "/{connection_id}/cache/invalidate",
-    response_model=Dict[str, Any],
+    response_model=CacheInvalidationResponse,
     summary="Invalidate connection cache",
 )
 def invalidate_connection_cache(
