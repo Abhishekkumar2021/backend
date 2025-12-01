@@ -22,7 +22,7 @@ class Connection(Base):
     description = Column(Text)
     is_source = Column(Boolean, default=True)
 
-    last_test_at = Column(DateTime)
+    last_test_at = Column(DateTime(timezone=True))
     last_test_success = Column(Boolean)
     last_test_error = Column(Text)
 
@@ -93,8 +93,8 @@ class Pipeline(Base):
 
     created_at = Column(DateTime, default=lambda: datetime.now(UTC))
     updated_at = Column(DateTime, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC))
-    last_run_at = Column(DateTime)
-    next_run_at = Column(DateTime)
+    last_run_at = Column(DateTime(timezone=True))
+    next_run_at = Column(DateTime(timezone=True))
 
     # Relationships
     source_connection = relationship("Connection", foreign_keys=[source_connection_id], back_populates="source_pipelines")
@@ -155,8 +155,8 @@ class Job(Base):
     status = Column(SQLEnum(JobStatus), default=JobStatus.PENDING)
     celery_task_id = Column(String(255), unique=True, index=True)
 
-    started_at = Column(DateTime)
-    completed_at = Column(DateTime)
+    started_at = Column(DateTime(timezone=True))
+    completed_at = Column(DateTime(timezone=True))
     duration_seconds = Column(Float)
 
     records_extracted = Column(Integer, default=0)
@@ -237,7 +237,7 @@ class Alert(Base):
     recipient = Column(String(255), nullable=False)
 
     timestamp = Column(DateTime, default=lambda: datetime.now(UTC))
-    sent_at = Column(DateTime)
+    sent_at = Column(DateTime(timezone=True))
 
     alert_config = relationship("AlertConfig")
     job = relationship("Job", back_populates="alerts")

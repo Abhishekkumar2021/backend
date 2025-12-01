@@ -1,6 +1,6 @@
 from app.pipeline.processors.base import BaseProcessor
 from app.connectors.base import Record
-import datetime
+from datetime import datetime, timezone
 
 class ExampleTransformerProcessor(BaseProcessor):
     """
@@ -8,5 +8,5 @@ class ExampleTransformerProcessor(BaseProcessor):
     """
 
     def transform_record(self, record: Record) -> Record:
-        record.data["processed_at"] = datetime.utcnow().isoformat()
+        record.data["processed_at"] = datetime.now(timezone.utc).isoformat()
         return record

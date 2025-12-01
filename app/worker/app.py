@@ -20,6 +20,7 @@ from celery.signals import (
 
 from app.worker.config import CeleryConfig
 from app.core.logging import get_logger
+from app.connectors import factory
 
 logger = get_logger(__name__)
 

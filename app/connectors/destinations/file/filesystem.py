@@ -2,7 +2,7 @@
 
 import csv
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 import os
 from pathlib import Path
 from typing import Any
@@ -165,7 +165,7 @@ class FileSystemDestination(DestinationConnector):
         stream_dir = self.base_path / stream
         stream_dir.mkdir(parents=True, exist_ok=True)
 
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
         ext = self._get_file_extension()
         file_path = stream_dir / f"{stream}_{timestamp}.{ext}"
 

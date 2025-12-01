@@ -218,8 +218,7 @@ class DatabaseScheduler(Scheduler):
                 hour=hour,
                 day_of_month=day_of_month,
                 month_of_year=month_of_year,
-                day_of_week=day_of_week,
-                tz=pytz.utc,
+                day_of_week=day_of_week
             )
             
             return schedule
@@ -238,28 +237,24 @@ class DatabaseScheduler(Scheduler):
         pipeline: Pipeline,
         schedule: crontab,
     ) -> None:
-        """Update pipeline.next_run_at based on schedule.
-        
-        Args:
-            db: Database session
-            pipeline: Pipeline object
-            schedule: Crontab schedule
-        """
+        """Update pipeline.next_run_at using Celery 5.x schedule API."""
         try:
-            current_app.set_default_tz("UTC")
-            next_run = schedule.next(current_app.now())
+            now = current_app.now()  # Always timezone-aware UTC datetime
+            
+            # Celery 5.x+ way to compute next ETA
+            eta = schedule.remaining_estimate(now)
+            next_run = now + eta
             
             if pipeline.next_run_at != next_run:
                 pipeline.next_run_at = next_run
                 db.add(pipeline)
                 db.commit()
-                
+
                 logger.debug(
                     "next_run_updated",
                     pipeline_id=pipeline.id,
                     next_run_at=next_run.isoformat(),
                 )
-        
         except Exception as e:
             logger.warning(
                 "next_run_update_failed",
@@ -267,6 +262,7 @@ class DatabaseScheduler(Scheduler):
                 error=str(e),
             )
             db.rollback()
+
 
     def tick(self, *args, **kwargs):
         """Called periodically by Celery Beat.

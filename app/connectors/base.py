@@ -5,7 +5,7 @@ All source and destination connectors inherit from these
 from abc import ABC, abstractmethod
 from collections.abc import Iterator
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Type, Dict, Tuple
 
@@ -66,7 +66,7 @@ class Schema:
 
     def __post_init__(self):
         if self.discovered_at is None:
-            self.discovered_at = datetime.utcnow()
+            self.discovered_at = datetime.now(timezone.utc)
 
 
 @dataclass
@@ -81,7 +81,7 @@ class Record:
 
     def __post_init__(self):
         if self.time_extracted is None:
-            self.time_extracted = datetime.utcnow()
+            self.time_extracted = datetime.now(timezone.utc)
 
 
 @dataclass
@@ -107,7 +107,7 @@ class ConnectionTestResult:
         self.success = success
         self.message = message
         self.metadata = metadata or {}
-        self.tested_at = datetime.utcnow()
+        self.tested_at = datetime.now(timezone.utc)
 
 
 class SourceConnector(ABC):

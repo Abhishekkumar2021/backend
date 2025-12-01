@@ -29,7 +29,7 @@ def setup_logging(
     shared_processors = [
         structlog.contextvars.merge_contextvars,
         add_log_level,
-        structlog.processors.TimeStamper(fmt="iso"),
+        structlog.processors.TimeStamper(fmt="iso", utc=True),
         structlog.processors.StackInfoRenderer(),
         structlog.processors.format_exc_info,
     ]

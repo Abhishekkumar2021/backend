@@ -4,7 +4,7 @@
 import io
 import json
 from collections.abc import Iterator
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 import boto3
@@ -183,7 +183,7 @@ class S3Destination(DestinationConnector):
     # Internal Stream Writer
     # ===================================================================
     def _write_stream(self, stream: str, data: list[dict[str, Any]]) -> int:
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
         extension = self._get_file_extension()
 
         if self.prefix:
