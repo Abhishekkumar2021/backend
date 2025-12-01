@@ -3,331 +3,401 @@ Handles caching for metadata, credentials, and connection tests
 """
 
 import json
-import logging
 from typing import Any
-
 import redis
 
 from app.core.config import settings
+from app.core.logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class CacheService:
-    """Redis-based cache service
-    Uses different key prefixes for different data types
-    """
+    """Redis-based cache service with structured logging."""
 
     # Key prefixes
-    PREFIX_SCHEMA = "schema:"  # Cached schema metadata
-    PREFIX_CONFIG = "config:"  # Decrypted connection configs
-    PREFIX_TEST = "test:"  # Connection test results
-    PREFIX_CONNECTOR = "connector:"  # Connector instances (pickled)
-    PREFIX_METADATA = "metadata:"  # General metadata cache
+    PREFIX_SCHEMA = "schema:"
+    PREFIX_CONFIG = "config:"
+    PREFIX_TEST = "test:"
+    PREFIX_CONNECTOR = "connector:"
+    PREFIX_METADATA = "metadata:"
 
-    # TTL values (in seconds)
-    TTL_SCHEMA = 3600  # 1 hour - schemas change infrequently
-    TTL_CONFIG = 1800  # 30 minutes - session-based
-    TTL_TEST = 300  # 5 minutes - test results
-    TTL_CONNECTOR = 600  # 10 minutes - connector instances
-    TTL_METADATA = 1800  # 30 minutes - general metadata
+    # TTL values
+    TTL_SCHEMA = 3600
+    TTL_CONFIG = 1800
+    TTL_TEST = 300
+    TTL_CONNECTOR = 600
+    TTL_METADATA = 1800
 
+    # ===================================================================
+    # Initialization
+    # ===================================================================
     def __init__(self):
-        """Initialize Redis connection"""
+        """Initialize Redis connection."""
         try:
             self.redis_client = redis.from_url(
                 settings.REDIS_URL,
-                decode_responses=False,  # We'll handle encoding ourselves
+                decode_responses=False,
                 socket_connect_timeout=5,
                 socket_keepalive=True,
             )
+
             # Test connection
             self.redis_client.ping()
-            logger.info(f"✅ Redis connected: {settings.REDIS_URL}")
+
+            logger.info(
+                "cache_connection_successful",
+                redis_url=settings.REDIS_URL,
+            )
+
         except Exception as e:
-            logger.error(f"❌ Redis connection failed: {e!s}")
+            logger.error(
+                "cache_connection_failed",
+                error=str(e),
+                redis_url=settings.REDIS_URL,
+                exc_info=True,
+            )
             self.redis_client = None
 
     def is_available(self) -> bool:
-        """Check if Redis is available"""
+        """Check if Redis is available."""
         if self.redis_client is None:
             return False
+
         try:
             self.redis_client.ping()
             return True
-        except:
+        except Exception:
             return False
 
     def _make_key(self, prefix: str, identifier: str) -> str:
-        """Create cache key with prefix"""
+        """Construct namespaced key."""
         return f"{prefix}{identifier}"
 
-    # ============================================
-    # SCHEMA METADATA CACHING
-    # ============================================
-
+    # ===================================================================
+    # SCHEMA CACHING
+    # ===================================================================
     def get_schema(self, connection_id: int) -> dict[str, Any] | None:
-        """Get cached schema metadata
-
-        Args:
-            connection_id: Connection ID
-
-        Returns:
-            Schema dict or None if not cached
-
-        """
         if not self.is_available():
             return None
 
+        key = self._make_key(self.PREFIX_SCHEMA, str(connection_id))
+
         try:
-            key = self._make_key(self.PREFIX_SCHEMA, str(connection_id))
             data = self.redis_client.get(key)
 
             if data:
-                logger.info(f"📦 Cache HIT: Schema for connection {connection_id}")
+                logger.debug(
+                    "schema_cache_hit",
+                    connection_id=connection_id,
+                )
                 return json.loads(data.decode("utf-8"))
 
-            logger.debug(f"📦 Cache MISS: Schema for connection {connection_id}")
+            logger.debug(
+                "schema_cache_miss",
+                connection_id=connection_id,
+            )
             return None
+
         except Exception as e:
-            logger.warning(f"Cache read error: {e!s}")
+            logger.warning(
+                "schema_cache_read_error",
+                connection_id=connection_id,
+                error=str(e),
+                exc_info=True,
+            )
             return None
 
     def set_schema(self, connection_id: int, schema: dict[str, Any], ttl: int = None) -> bool:
-        """Cache schema metadata
-
-        Args:
-            connection_id: Connection ID
-            schema: Schema dictionary
-            ttl: Time to live in seconds (default: TTL_SCHEMA)
-
-        Returns:
-            True if cached successfully
-
-        """
         if not self.is_available():
             return False
 
-        try:
-            key = self._make_key(self.PREFIX_SCHEMA, str(connection_id))
-            data = json.dumps(schema, default=str)
-            ttl = ttl or self.TTL_SCHEMA
+        key = self._make_key(self.PREFIX_SCHEMA, str(connection_id))
+        ttl = ttl or self.TTL_SCHEMA
 
-            self.redis_client.setex(key, ttl, data.encode("utf-8"))
-            logger.info(f"💾 Cached schema for connection {connection_id} (TTL: {ttl}s)")
+        try:
+            payload = json.dumps(schema)
+            self.redis_client.setex(key, ttl, payload.encode("utf-8"))
+
+            logger.info(
+                "schema_cache_write_success",
+                connection_id=connection_id,
+                ttl=ttl,
+            )
             return True
+
         except Exception as e:
-            logger.warning(f"Cache write error: {e!s}")
+            logger.warning(
+                "schema_cache_write_error",
+                connection_id=connection_id,
+                error=str(e),
+                exc_info=True,
+            )
             return False
 
     def invalidate_schema(self, connection_id: int) -> bool:
-        """Invalidate cached schema"""
         if not self.is_available():
             return False
 
+        key = self._make_key(self.PREFIX_SCHEMA, str(connection_id))
+
         try:
-            key = self._make_key(self.PREFIX_SCHEMA, str(connection_id))
             self.redis_client.delete(key)
-            logger.info(f"🗑️  Invalidated schema cache for connection {connection_id}")
+            logger.info(
+                "schema_cache_invalidated",
+                connection_id=connection_id,
+            )
             return True
         except Exception as e:
-            logger.warning(f"Cache delete error: {e!s}")
+            logger.warning(
+                "schema_cache_invalidation_error",
+                connection_id=connection_id,
+                error=str(e),
+                exc_info=True,
+            )
             return False
 
-    # ============================================
-    # DECRYPTED CONFIG CACHING
-    # ============================================
-
+    # ===================================================================
+    # CONFIG CACHING
+    # ===================================================================
     def get_config(self, connection_id: int) -> dict[str, Any] | None:
-        """Get cached decrypted config
-
-        Args:
-            connection_id: Connection ID
-
-        Returns:
-            Config dict or None if not cached
-
-        """
         if not self.is_available():
             return None
 
+        key = self._make_key(self.PREFIX_CONFIG, str(connection_id))
+
         try:
-            key = self._make_key(self.PREFIX_CONFIG, str(connection_id))
             data = self.redis_client.get(key)
 
             if data:
-                logger.info(f"📦 Cache HIT: Config for connection {connection_id}")
+                logger.debug(
+                    "config_cache_hit",
+                    connection_id=connection_id,
+                )
                 return json.loads(data.decode("utf-8"))
 
-            logger.debug(f"📦 Cache MISS: Config for connection {connection_id}")
+            logger.debug(
+                "config_cache_miss",
+                connection_id=connection_id,
+            )
             return None
+
         except Exception as e:
-            logger.warning(f"Cache read error: {e!s}")
+            logger.warning(
+                "config_cache_read_error",
+                connection_id=connection_id,
+                error=str(e),
+                exc_info=True,
+            )
             return None
 
     def set_config(self, connection_id: int, config: dict[str, Any], ttl: int = None) -> bool:
-        """Cache decrypted config
-
-        Args:
-            connection_id: Connection ID
-            config: Decrypted configuration
-            ttl: Time to live in seconds (default: TTL_CONFIG)
-
-        Returns:
-            True if cached successfully
-
-        """
         if not self.is_available():
             return False
 
-        try:
-            key = self._make_key(self.PREFIX_CONFIG, str(connection_id))
-            data = json.dumps(config)
-            ttl = ttl or self.TTL_CONFIG
+        key = self._make_key(self.PREFIX_CONFIG, str(connection_id))
+        ttl = ttl or self.TTL_CONFIG
 
-            self.redis_client.setex(key, ttl, data.encode("utf-8"))
-            logger.debug(f"💾 Cached config for connection {connection_id} (TTL: {ttl}s)")
+        try:
+            payload = json.dumps(config)
+            self.redis_client.setex(key, ttl, payload.encode("utf-8"))
+
+            logger.info(
+                "config_cache_write_success",
+                connection_id=connection_id,
+                ttl=ttl,
+            )
             return True
+
         except Exception as e:
-            logger.warning(f"Cache write error: {e!s}")
+            logger.warning(
+                "config_cache_write_error",
+                connection_id=connection_id,
+                error=str(e),
+                exc_info=True,
+            )
             return False
 
     def invalidate_config(self, connection_id: int) -> bool:
-        """Invalidate cached config"""
         if not self.is_available():
             return False
 
+        key = self._make_key(self.PREFIX_CONFIG, str(connection_id))
+
         try:
-            key = self._make_key(self.PREFIX_CONFIG, str(connection_id))
             self.redis_client.delete(key)
-            logger.debug(f"🗑️  Invalidated config cache for connection {connection_id}")
+            logger.info(
+                "config_cache_invalidated",
+                connection_id=connection_id,
+            )
             return True
         except Exception as e:
-            logger.warning(f"Cache delete error: {e!s}")
+            logger.warning(
+                "config_cache_invalidation_error",
+                connection_id=connection_id,
+                error=str(e),
+                exc_info=True,
+            )
             return False
 
-    # ============================================
-    # CONNECTION TEST RESULT CACHING
-    # ============================================
-
+    # ===================================================================
+    # TEST RESULT CACHING
+    # ===================================================================
     def get_test_result(self, connection_id: int) -> dict[str, Any] | None:
-        """Get cached connection test result"""
         if not self.is_available():
             return None
 
+        key = self._make_key(self.PREFIX_TEST, str(connection_id))
+
         try:
-            key = self._make_key(self.PREFIX_TEST, str(connection_id))
             data = self.redis_client.get(key)
 
             if data:
-                logger.info(f"📦 Cache HIT: Test result for connection {connection_id}")
+                logger.debug(
+                    "test_result_cache_hit",
+                    connection_id=connection_id,
+                )
                 return json.loads(data.decode("utf-8"))
-
             return None
+
         except Exception as e:
-            logger.warning(f"Cache read error: {e!s}")
+            logger.warning(
+                "test_result_cache_read_error",
+                connection_id=connection_id,
+                error=str(e),
+                exc_info=True,
+            )
             return None
 
     def set_test_result(self, connection_id: int, result: dict[str, Any], ttl: int = None) -> bool:
-        """Cache connection test result"""
         if not self.is_available():
             return False
 
-        try:
-            key = self._make_key(self.PREFIX_TEST, str(connection_id))
-            data = json.dumps(result, default=str)
-            ttl = ttl or self.TTL_TEST
+        key = self._make_key(self.PREFIX_TEST, str(connection_id))
+        ttl = ttl or self.TTL_TEST
 
-            self.redis_client.setex(key, ttl, data.encode("utf-8"))
-            logger.debug(f"💾 Cached test result for connection {connection_id} (TTL: {ttl}s)")
+        try:
+            payload = json.dumps(result)
+            self.redis_client.setex(key, ttl, payload.encode("utf-8"))
+
+            logger.debug(
+                "test_result_cache_write_success",
+                connection_id=connection_id,
+                ttl=ttl,
+            )
             return True
+
         except Exception as e:
-            logger.warning(f"Cache write error: {e!s}")
+            logger.warning(
+                "test_result_cache_write_error",
+                connection_id=connection_id,
+                error=str(e),
+                exc_info=True,
+            )
             return False
 
     def invalidate_test_result(self, connection_id: int) -> bool:
-        """Invalidate cached test result"""
         if not self.is_available():
             return False
 
+        key = self._make_key(self.PREFIX_TEST, str(connection_id))
+
         try:
-            key = self._make_key(self.PREFIX_TEST, str(connection_id))
             self.redis_client.delete(key)
+            logger.info(
+                "test_result_cache_invalidated",
+                connection_id=connection_id,
+            )
             return True
-        except Exception:
+        except Exception as e:
+            logger.warning(
+                "test_result_cache_invalidation_error",
+                connection_id=connection_id,
+                error=str(e),
+                exc_info=True,
+            )
             return False
 
-    # ============================================
-    # GENERAL METADATA CACHING
-    # ============================================
-
+    # ===================================================================
+    # GENERIC METADATA CACHING
+    # ===================================================================
     def get(self, key: str) -> Any | None:
-        """Get generic cached value
-
-        Args:
-            key: Cache key
-
-        Returns:
-            Cached value or None
-
-        """
         if not self.is_available():
             return None
 
+        cache_key = self._make_key(self.PREFIX_METADATA, key)
+
         try:
-            data = self.redis_client.get(self._make_key(self.PREFIX_METADATA, key))
+            data = self.redis_client.get(cache_key)
             if data:
+                logger.debug("metadata_cache_hit", key=key)
                 return json.loads(data.decode("utf-8"))
+            logger.debug("metadata_cache_miss", key=key)
             return None
+
         except Exception as e:
-            logger.warning(f"Cache read error: {e!s}")
+            logger.warning(
+                "metadata_cache_read_error",
+                key=key,
+                error=str(e),
+                exc_info=True,
+            )
             return None
 
     def set(self, key: str, value: Any, ttl: int = None) -> bool:
-        """Set generic cached value
-
-        Args:
-            key: Cache key
-            value: Value to cache (must be JSON serializable)
-            ttl: Time to live in seconds
-
-        Returns:
-            True if cached successfully
-
-        """
         if not self.is_available():
             return False
 
-        try:
-            cache_key = self._make_key(self.PREFIX_METADATA, key)
-            data = json.dumps(value, default=str)
-            ttl = ttl or self.TTL_METADATA
+        cache_key = self._make_key(self.PREFIX_METADATA, key)
+        ttl = ttl or self.TTL_METADATA
 
-            self.redis_client.setex(cache_key, ttl, data.encode("utf-8"))
+        try:
+            payload = json.dumps(value)
+            self.redis_client.setex(cache_key, ttl, payload.encode("utf-8"))
+
+            logger.debug(
+                "metadata_cache_write_success",
+                key=key,
+                ttl=ttl,
+            )
             return True
+
         except Exception as e:
-            logger.warning(f"Cache write error: {e!s}")
+            logger.warning(
+                "metadata_cache_write_error",
+                key=key,
+                error=str(e),
+                exc_info=True,
+            )
             return False
 
     def delete(self, key: str) -> bool:
-        """Delete cached value"""
         if not self.is_available():
             return False
 
+        cache_key = self._make_key(self.PREFIX_METADATA, key)
+
         try:
-            self.redis_client.delete(self._make_key(self.PREFIX_METADATA, key))
+            self.redis_client.delete(cache_key)
+            logger.debug(
+                "metadata_cache_deleted",
+                key=key,
+            )
             return True
-        except Exception:
+
+        except Exception as e:
+            logger.warning(
+                "metadata_cache_delete_error",
+                key=key,
+                error=str(e),
+                exc_info=True,
+            )
             return False
 
-    # ============================================
-    # CACHE MANAGEMENT
-    # ============================================
-
+    # ===================================================================
+    # CONNECTION-LEVEL INVALIDATION
+    # ===================================================================
     def invalidate_connection(self, connection_id: int) -> bool:
-        """Invalidate all cached data for a connection
-        Call this when connection is updated or deleted
-        """
         if not self.is_available():
             return False
 
@@ -335,44 +405,76 @@ class CacheService:
             self.invalidate_schema(connection_id)
             self.invalidate_config(connection_id)
             self.invalidate_test_result(connection_id)
-            logger.info(f"🗑️  Invalidated all cache for connection {connection_id}")
+
+            logger.info(
+                "connection_cache_invalidated",
+                connection_id=connection_id,
+            )
             return True
         except Exception as e:
-            logger.warning(f"Cache invalidation error: {e!s}")
+            logger.warning(
+                "connection_cache_invalidation_error",
+                connection_id=connection_id,
+                error=str(e),
+                exc_info=True,
+            )
             return False
 
+    # ===================================================================
+    # CLEAR ALL CACHE
+    # ===================================================================
     def clear_all(self) -> bool:
-        """Clear all application cache (use with caution)"""
         if not self.is_available():
             return False
 
         try:
-            # Delete keys by pattern
-            for prefix in [self.PREFIX_SCHEMA, self.PREFIX_CONFIG, self.PREFIX_TEST, self.PREFIX_METADATA]:
+            prefixes = [
+                self.PREFIX_SCHEMA,
+                self.PREFIX_CONFIG,
+                self.PREFIX_TEST,
+                self.PREFIX_METADATA,
+            ]
+
+            for prefix in prefixes:
                 pattern = f"{prefix}*"
                 keys = self.redis_client.keys(pattern)
                 if keys:
                     self.redis_client.delete(*keys)
 
-            logger.warning("🗑️  Cleared ALL application cache")
+            logger.warning("all_cache_cleared")
             return True
+
         except Exception as e:
-            logger.error(f"Cache clear error: {e!s}")
+            logger.error(
+                "all_cache_clear_error",
+                error=str(e),
+                exc_info=True,
+            )
             return False
 
+    # ===================================================================
+    # STATS
+    # ===================================================================
     def get_stats(self) -> dict[str, Any]:
-        """Get cache statistics"""
         if not self.is_available():
             return {"available": False}
 
         try:
             info = self.redis_client.info()
 
-            # Count keys by prefix
             key_counts = {}
-            for prefix in [self.PREFIX_SCHEMA, self.PREFIX_CONFIG, self.PREFIX_TEST, self.PREFIX_METADATA]:
+            prefixes = [
+                self.PREFIX_SCHEMA,
+                self.PREFIX_CONFIG,
+                self.PREFIX_TEST,
+                self.PREFIX_METADATA,
+            ]
+
+            for prefix in prefixes:
                 pattern = f"{prefix}*"
                 key_counts[prefix] = len(self.redis_client.keys(pattern))
+
+            logger.debug("cache_stats_retrieved")
 
             return {
                 "available": True,
@@ -381,22 +483,23 @@ class CacheService:
                 "total_keys": sum(key_counts.values()),
                 "keys_by_type": key_counts,
             }
+
         except Exception as e:
-            logger.error(f"Stats error: {e!s}")
+            logger.error(
+                "cache_stats_error",
+                error=str(e),
+                exc_info=True,
+            )
             return {"available": False, "error": str(e)}
 
 
-# Global cache service instance
+# ===================================================================
+# GLOBAL CACHE SINGLETON
+# ===================================================================
 _cache_service: CacheService | None = None
 
 
 def get_cache() -> CacheService:
-    """Get the global cache service instance
-
-    Returns:
-        CacheService instance
-
-    """
     global _cache_service
     if _cache_service is None:
         _cache_service = CacheService()
@@ -404,6 +507,5 @@ def get_cache() -> CacheService:
 
 
 def reset_cache() -> None:
-    """Reset the global cache service (for testing)"""
     global _cache_service
     _cache_service = None

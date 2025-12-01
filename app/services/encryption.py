@@ -1,12 +1,5 @@
 """Encryption Service - Master Password + DEK Architecture
-Securely encrypts/decrypts connection credentials
-
-Architecture:
-1. User creates Master Password (stored only in memory/session)
-2. System generates DEK (Data Encryption Key)
-3. Master Password encrypts the DEK
-4. DEK encrypts all connection credentials
-5. Encrypted DEK stored in database
+Securely encrypts/decrypts connection credentials.
 """
 
 import base64
@@ -18,279 +11,256 @@ from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
+from app.core.logging import get_logger
+
+logger = get_logger(__name__)
+
 
 class EncryptionError(Exception):
     """Base encryption error"""
-
 
 
 class InvalidMasterPasswordError(EncryptionError):
     """Master password is incorrect"""
 
 
-
 class EncryptionService:
-    """Handles all encryption/decryption operations
-    Uses Fernet (symmetric encryption) with key derivation
-    """
+    """Handles all encryption/decryption operations using PBKDF2 + Fernet."""
 
     def __init__(self, master_password: str | None = None):
-        """Initialize encryption service
-
-        Args:
-            master_password: User's master password (not stored anywhere)
-
-        """
         self._master_password = master_password
         self._dek: bytes | None = None
         self._fernet: Fernet | None = None
 
+        logger.debug(
+            "encryption_service_initialized",
+            master_password_provided=bool(master_password),
+        )
+
+    # ===================================================================
+    # DEK Generation + Key Derivation
+    # ===================================================================
     @staticmethod
     def generate_dek() -> bytes:
-        """Generate a new Data Encryption Key (DEK)
-        This is a random 32-byte key for Fernet
-
-        Returns:
-            Random DEK as bytes
-
-        """
+        """Generate a new random DEK."""
+        logger.debug("dek_generation_requested")
         return Fernet.generate_key()
 
     @staticmethod
     def derive_key_from_password(password: str, salt: bytes) -> bytes:
-        """Derive encryption key from master password using PBKDF2
+        """Derive encryption key from master password using PBKDF2."""
+        logger.debug("master_password_key_derivation_requested")
 
-        Args:
-            password: Master password
-            salt: Salt for key derivation
-
-        Returns:
-            32-byte encryption key
-
-        """
         kdf = PBKDF2HMAC(
             algorithm=hashes.SHA256(),
             length=32,
             salt=salt,
-            iterations=100000,  # OWASP recommendation
+            iterations=100000,
         )
         return base64.urlsafe_b64encode(kdf.derive(password.encode()))
 
+    # ===================================================================
+    # DEK Encryption / Decryption
+    # ===================================================================
     def encrypt_dek(self, dek: bytes, master_password: str, salt: bytes) -> str:
-        """Encrypt the DEK using master password
+        """Encrypt DEK with master password."""
+        logger.info("dek_encryption_requested")
 
-        Args:
-            dek: Data Encryption Key to encrypt
-            master_password: User's master password
-            salt: Salt for key derivation
-
-        Returns:
-            Base64-encoded encrypted DEK
-
-        """
         key = self.derive_key_from_password(master_password, salt)
         f = Fernet(key)
         encrypted_dek = f.encrypt(dek)
+
+        logger.info("dek_encryption_completed")
         return base64.b64encode(encrypted_dek).decode()
 
     def decrypt_dek(self, encrypted_dek: str, master_password: str, salt: bytes) -> bytes:
-        """Decrypt the DEK using master password
+        """Decrypt DEK with master password."""
+        logger.info("dek_decryption_requested")
 
-        Args:
-            encrypted_dek: Base64-encoded encrypted DEK
-            master_password: User's master password
-            salt: Salt for key derivation
+        try:
+            key = self.derive_key_from_password(master_password, salt)
+            f = Fernet(key)
+            encrypted_bytes = base64.b64decode(encrypted_dek.encode())
+            dek = f.decrypt(encrypted_bytes)
 
-        Returns:
-            Decrypted DEK as bytes
+            logger.info("dek_decryption_completed")
+            return dek
 
-        """
-        key = self.derive_key_from_password(master_password, salt)
-        f = Fernet(key)
-        encrypted_dek_bytes = base64.b64decode(encrypted_dek.encode())
-        return f.decrypt(encrypted_dek_bytes)
+        except Exception as e:
+            logger.error(
+                "dek_decryption_failed",
+                error=str(e),
+                exc_info=True,
+            )
+            raise InvalidMasterPasswordError("Invalid master password")
 
+    # ===================================================================
+    # Unlock / Lock Service
+    # ===================================================================
     def unlock(self, encrypted_dek: str, master_password: str, salt: bytes) -> None:
-        """Unlock the encryption service by decrypting DEK with master password
-        This must be called before encrypt/decrypt operations
+        """Unlock service by decrypting DEK."""
+        logger.info("encryption_service_unlock_requested")
 
-        Args:
-            encrypted_dek: Encrypted DEK from database
-            master_password: User's master password
-            salt: Salt for key derivation
+        try:
+            self._dek = self.decrypt_dek(encrypted_dek, master_password, salt)
+            self._fernet = Fernet(self._dek)
+            self._master_password = master_password
 
-        """
-        self._dek = self.decrypt_dek(encrypted_dek, master_password, salt)
-        self._fernet = Fernet(self._dek)
-        self._master_password = master_password
+            logger.info("encryption_service_unlocked")
+
+        except InvalidMasterPasswordError:
+            logger.warning(
+                "encryption_service_unlock_failed_invalid_password",
+            )
+            raise
+
+        except Exception as e:
+            logger.error(
+                "encryption_service_unlock_failed",
+                error=str(e),
+                exc_info=True,
+            )
+            raise EncryptionError("Unable to unlock encryption service")
 
     def is_unlocked(self) -> bool:
-        """Check if encryption service is unlocked"""
         return self._fernet is not None
 
     def get_master_password(self) -> str | None:
-        """Get the current master password"""
         return self._master_password
 
+    # ===================================================================
+    # Encrypt / Decrypt Config
+    # ===================================================================
     def encrypt_config(self, config: dict[str, Any]) -> str:
-        """Encrypt connection configuration
-
-        Args:
-            config: Dictionary with connection details (host, port, user, password, etc.)
-
-        Returns:
-            Base64-encoded encrypted config string
-
-        Raises:
-            RuntimeError: If service not unlocked
-
-        """
+        """Encrypt connection config (JSON)."""
         if not self.is_unlocked():
+            logger.error("encrypt_config_failed_service_locked")
             raise RuntimeError("Encryption service not unlocked. Call unlock() first.")
 
-        # Convert dict to JSON string
-        config_json = json.dumps(config)
+        logger.debug("encrypt_config_requested")
 
-        # Encrypt
+        config_json = json.dumps(config)
         encrypted = self._fernet.encrypt(config_json.encode())
 
-        # Return as base64 string for database storage
+        logger.info("encrypt_config_completed")
         return base64.b64encode(encrypted).decode()
 
     def decrypt_config(self, encrypted_config: str) -> dict[str, Any]:
-        """Decrypt connection configuration
-
-        Args:
-            encrypted_config: Base64-encoded encrypted config string
-
-        Returns:
-            Decrypted configuration dictionary
-
-        Raises:
-            RuntimeError: If service not unlocked
-
-        """
+        """Decrypt connection config."""
         if not self.is_unlocked():
+            logger.error("decrypt_config_failed_service_locked")
             raise RuntimeError("Encryption service not unlocked. Call unlock() first.")
 
-        try:
-            # Decode from base64
-            encrypted_bytes = base64.b64decode(encrypted_config.encode())
+        logger.debug("decrypt_config_requested")
 
-            # Decrypt
+        try:
+            encrypted_bytes = base64.b64decode(encrypted_config.encode())
             decrypted = self._fernet.decrypt(encrypted_bytes)
 
-            # Parse JSON
+            logger.info("decrypt_config_completed")
             return json.loads(decrypted.decode())
+
         except Exception as e:
+            logger.error(
+                "decrypt_config_failed",
+                error=str(e),
+                exc_info=True,
+            )
             raise EncryptionError(f"Failed to decrypt config: {e!s}")
 
+    # ===================================================================
+    # Lock Service
+    # ===================================================================
     def lock(self) -> None:
-        """Lock the encryption service (clear DEK from memory)
-        Should be called when user logs out or session ends
-        """
+        """Clear DEK + password from memory."""
+        logger.info("encryption_service_lock_requested")
+
         self._dek = None
         self._fernet = None
         self._master_password = None
 
+        logger.info("encryption_service_locked")
 
+
+# ===================================================================
+# Master Password Manager
+# ===================================================================
 class MasterPasswordManager:
-    """Manages master password setup and validation
-    """
+    """Manages master password creation and validation."""
 
     @staticmethod
     def generate_salt() -> bytes:
-        """Generate a random salt for key derivation"""
+        logger.debug("salt_generation_requested")
         return os.urandom(32)
 
     @staticmethod
     def initialize_system(master_password: str) -> dict[str, str]:
-        """Initialize system with master password (first-time setup)
+        logger.info("encryption_system_initialization_requested")
 
-        Args:
-            master_password: User's chosen master password
-
-        Returns:
-            Dictionary with encrypted_dek and salt (base64 encoded)
-
-        """
-        # Generate salt
         salt = MasterPasswordManager.generate_salt()
-
-        # Generate DEK
         dek = EncryptionService.generate_dek()
 
-        # Encrypt DEK with master password
         service = EncryptionService()
         encrypted_dek = service.encrypt_dek(dek, master_password, salt)
 
-        return {"encrypted_dek": encrypted_dek, "salt": base64.b64encode(salt).decode()}
+        logger.info("encryption_system_initialized")
+
+        return {
+            "encrypted_dek": encrypted_dek,
+            "salt": base64.b64encode(salt).decode(),
+        }
 
     @staticmethod
     def verify_master_password(master_password: str, encrypted_dek: str, salt_b64: str) -> bool:
-        """Verify if master password is correct
+        logger.info("master_password_verification_requested")
 
-        Args:
-            master_password: Password to verify
-            encrypted_dek: Stored encrypted DEK
-            salt_b64: Base64-encoded salt
-
-        Returns:
-            True if password is correct, False otherwise
-
-        """
         try:
             salt = base64.b64decode(salt_b64.encode())
             service = EncryptionService()
             service.decrypt_dek(encrypted_dek, master_password, salt)
+
+            logger.info("master_password_verification_success")
             return True
+
         except Exception:
+            logger.warning("master_password_verification_failed")
             return False
 
 
-# Global encryption service instance
-# Will be initialized when user unlocks with master password
+# ===================================================================
+# Global Encryption Service Helpers
+# ===================================================================
 _encryption_service: EncryptionService | None = None
 
 
 def get_encryption_service() -> EncryptionService:
-    """Get the global encryption service instance
-
-    Returns:
-        EncryptionService instance
-
-    Raises:
-        RuntimeError: If service not initialized
-
-    """
     global _encryption_service
     if _encryption_service is None:
+        logger.error("get_encryption_service_failed_not_initialized")
         raise RuntimeError("Encryption service not initialized")
     return _encryption_service
 
 
 def initialize_encryption_service(encrypted_dek: str, master_password: str, salt: str) -> EncryptionService:
-    """Initialize and unlock the global encryption service
+    logger.info("initialize_encryption_service_requested")
 
-    Args:
-        encrypted_dek: Encrypted DEK from database
-        master_password: User's master password
-        salt: Base64-encoded salt
-
-    Returns:
-        Unlocked EncryptionService instance
-
-    """
     global _encryption_service
     _encryption_service = EncryptionService()
+
     salt_bytes = base64.b64decode(salt.encode())
     _encryption_service.unlock(encrypted_dek, master_password, salt_bytes)
+
+    logger.info("initialize_encryption_service_completed")
     return _encryption_service
 
 
 def lock_encryption_service() -> None:
-    """Lock and clear the global encryption service"""
+    logger.info("lock_encryption_service_requested")
+
     global _encryption_service
     if _encryption_service:
         _encryption_service.lock()
+
     _encryption_service = None
+
+    logger.info("lock_encryption_service_completed")

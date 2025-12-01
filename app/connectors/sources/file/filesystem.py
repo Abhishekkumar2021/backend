@@ -2,7 +2,6 @@
 """
 
 import json
-import logging
 import os
 from collections.abc import Iterator
 from pathlib import Path
@@ -12,9 +11,13 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from app.connectors.base import Column, ConnectionTestResult, DataType, Record, Schema, SourceConnector
+from app.connectors.base import (
+    Column, ConnectionTestResult, DataType,
+    Record, Schema, SourceConnector, Table
+)
+from app.core.logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class FileSystemSource(SourceConnector):
@@ -25,16 +28,8 @@ class FileSystemSource(SourceConnector):
     SUPPORTED_FORMATS = ["parquet", "json", "csv", "jsonl"]
 
     def __init__(self, config: dict[str, Any]):
-        """Initialize FileSystem source connector
-
-        Config format:
-        {
-            "file_path": "/path/to/file.parquet",  # or directory
-            "format": "parquet",  # Auto-detect if not specified
-            "glob_pattern": "*.parquet"  # Optional: for directory reading
-        }
-        """
         super().__init__(config)
+
         self.file_path = Path(config["file_path"])
         self.format = config.get("format", self._detect_format()).lower()
         self.glob_pattern = config.get("glob_pattern", "*")
@@ -42,22 +37,53 @@ class FileSystemSource(SourceConnector):
         if self.format not in self.SUPPORTED_FORMATS:
             raise ValueError(f"Unsupported format: {self.format}")
 
-    def _detect_format(self) -> str:
-        """Auto-detect file format from extension"""
-        if self.file_path.is_file():
-            extension = self.file_path.suffix.lower().lstrip(".")
-            if extension in self.SUPPORTED_FORMATS:
-                return extension
-        return "parquet"  # Default
+        logger.debug(
+            "filesystem_source_initialized",
+            file_path=str(self.file_path),
+            format=self.format,
+            glob_pattern=self.glob_pattern,
+        )
 
+    # ===================================================================
+    # Format Detection
+    # ===================================================================
+    def _detect_format(self) -> str:
+        """Auto-detect file format from extension."""
+        if self.file_path.is_file():
+            ext = self.file_path.suffix.lower().lstrip(".")
+            if ext in self.SUPPORTED_FORMATS:
+                return ext
+        return "parquet"
+
+    # ===================================================================
+    # Test Connection
+    # ===================================================================
     def test_connection(self) -> ConnectionTestResult:
-        """Test file system read access"""
+        logger.info(
+            "filesystem_test_connection_requested",
+            path=str(self.file_path),
+        )
+
         try:
             if not self.file_path.exists():
-                return ConnectionTestResult(success=False, message=f"Path does not exist: {self.file_path}")
+                logger.warning(
+                    "filesystem_test_path_not_found",
+                    path=str(self.file_path),
+                )
+                return ConnectionTestResult(
+                    success=False,
+                    message=f"Path does not exist: {self.file_path}",
+                )
 
             if not os.access(self.file_path, os.R_OK):
-                return ConnectionTestResult(success=False, message=f"No read permission for: {self.file_path}")
+                logger.warning(
+                    "filesystem_test_no_read_access",
+                    path=str(self.file_path),
+                )
+                return ConnectionTestResult(
+                    success=False,
+                    message=f"No read permission for: {self.file_path}",
+                )
 
             # Count files
             if self.file_path.is_dir():
@@ -66,20 +92,48 @@ class FileSystemSource(SourceConnector):
             else:
                 file_count = 1
 
+            logger.info(
+                "filesystem_test_connection_success",
+                path=str(self.file_path),
+                file_count=file_count,
+            )
+
             return ConnectionTestResult(
                 success=True,
                 message="Read access confirmed",
-                metadata={"path": str(self.file_path), "format": self.format, "file_count": file_count},
+                metadata={
+                    "path": str(self.file_path),
+                    "format": self.format,
+                    "file_count": file_count,
+                },
             )
 
         except Exception as e:
-            return ConnectionTestResult(success=False, message=f"Test failed: {e!s}")
+            logger.error(
+                "filesystem_test_connection_failed",
+                path=str(self.file_path),
+                error=str(e),
+                exc_info=True,
+            )
+            return ConnectionTestResult(success=False, message=f"Test failed: {e}")
 
+    # ===================================================================
+    # Schema Discovery
+    # ===================================================================
     def discover_schema(self) -> Schema:
-        """Discover schema from the file(s)
-        """
+        logger.info(
+            "filesystem_schema_discovery_requested",
+            path=str(self.file_path),
+            format=self.format,
+        )
+
         files = self._get_files()
+
         if not files:
+            logger.info(
+                "filesystem_schema_no_files_found",
+                path=str(self.file_path),
+            )
             return Schema(tables=[])
 
         first_file = files[0]
@@ -89,8 +143,6 @@ class FileSystemSource(SourceConnector):
             if self.format == "parquet":
                 table = pq.read_table(first_file)
                 for field in table.schema:
-                    # Basic type mapping
-                    col_type = DataType.STRING
                     if pa.types.is_integer(field.type):
                         col_type = DataType.INTEGER
                     elif pa.types.is_floating(field.type):
@@ -99,64 +151,101 @@ class FileSystemSource(SourceConnector):
                         col_type = DataType.BOOLEAN
                     elif pa.types.is_timestamp(field.type) or pa.types.is_date(field.type):
                         col_type = DataType.DATETIME
+                    else:
+                        col_type = DataType.STRING
 
                     columns.append(Column(name=field.name, data_type=col_type))
 
             elif self.format == "csv":
                 df = pd.read_csv(first_file, nrows=1)
                 for col in df.columns:
-                    # In CSV everything is string initially, but we could infer
-                    # For now, let's default to string unless obvious
                     columns.append(Column(name=col, data_type=DataType.STRING))
 
-            # JSON/JSONL logic is similar (read first record)
             elif self.format in ["json", "jsonl"]:
-                # Simplified discovery for JSON
+                # Simplified JSON schema: a single "data" column
                 columns.append(Column(name="data", data_type=DataType.JSON))
 
+            logger.info(
+                "filesystem_schema_discovery_completed",
+                file=str(first_file),
+                column_count=len(columns),
+            )
+
         except Exception as e:
-            logger.error(f"Failed to discover schema: {e}")
-            # Return empty schema on failure or just the stream name
+            logger.error(
+                "filesystem_schema_discovery_failed",
+                file=str(first_file),
+                error=str(e),
+                exc_info=True,
+            )
 
-        # We treat the file path/name as the "table"
         table_name = self.file_path.stem
+        return Schema(
+            tables=[
+                Table(
+                    name=table_name,
+                    columns=columns,
+                    row_count=0,
+                )
+            ]
+        )
 
-        return Schema(tables=[{"name": table_name, "columns": columns}])
-
+    # ===================================================================
+    # Record Count
+    # ===================================================================
     def get_record_count(self, stream: str) -> int:
-        """Get total rows for progress tracking
-        """
-        # This can be expensive for large CSV/JSON files
-        # For parquet it's cheap
+        logger.info(
+            "filesystem_record_count_requested",
+            path=str(self.file_path),
+            format=self.format,
+        )
+
         files = self._get_files()
         total = 0
+
         for f in files:
             if self.format == "parquet":
                 try:
                     meta = pq.read_metadata(f)
                     total += meta.num_rows
-                except:
+                except Exception:
+                    logger.warning(
+                        "filesystem_record_count_metadata_failed",
+                        file=str(f),
+                        exc_info=True,
+                    )
                     pass
-            # For others, maybe too expensive to count? Return -1 or estimation?
-            # Let's just return 0 for now to be safe if unknown
+
+        logger.info(
+            "filesystem_record_count_completed",
+            record_count=total,
+        )
+
         return total
 
-    def read(self, stream: str, state: dict[str, Any] = None, query: str = None) -> Iterator[Record]:
-        """Read data from file(s)
+    # ===================================================================
+    # Read Data
+    # ===================================================================
+    def read(
+        self,
+        stream: str,
+        state: dict[str, Any] = None,
+        query: str = None,
+    ) -> Iterator[Record]:
+        logger.info(
+            "filesystem_read_requested",
+            path=str(self.file_path),
+            format=self.format,
+            stream=stream,
+        )
 
-        Args:
-            stream: File name or pattern
-            state: Incremental state (unused for files usually)
-            query: Optional query filter (unused for files)
-
-        Yields:
-            Record objects
-
-        """
         files = self._get_files()
 
         for file_path in files:
-            logger.info(f"Reading file: {file_path}")
+            logger.info(
+                "filesystem_file_read_requested",
+                file=str(file_path),
+            )
 
             if self.format == "parquet":
                 yield from self._read_parquet(file_path, stream)
@@ -167,16 +256,41 @@ class FileSystemSource(SourceConnector):
             elif self.format == "csv":
                 yield from self._read_csv(file_path, stream)
 
+    # ===================================================================
+    # File Discovery
+    # ===================================================================
     def _get_files(self) -> list[Path]:
-        """Get list of files to read"""
         if self.file_path.is_file():
+            logger.debug(
+                "filesystem_get_files_single_file",
+                file=str(self.file_path),
+            )
             return [self.file_path]
+
         if self.file_path.is_dir():
-            return sorted(self.file_path.glob(self.glob_pattern))
+            files = sorted(self.file_path.glob(self.glob_pattern))
+            logger.debug(
+                "filesystem_get_files_directory",
+                directory=str(self.file_path),
+                file_count=len(files),
+            )
+            return files
+
+        logger.warning(
+            "filesystem_get_files_invalid_path",
+            path=str(self.file_path),
+        )
         return []
 
+    # ===================================================================
+    # Read Formats
+    # ===================================================================
     def _read_parquet(self, file_path: Path, stream: str) -> Iterator[Record]:
-        """Read Parquet file"""
+        logger.debug(
+            "filesystem_read_parquet_requested",
+            file=str(file_path),
+        )
+
         table = pq.read_table(file_path)
         df = table.to_pandas()
 
@@ -184,7 +298,11 @@ class FileSystemSource(SourceConnector):
             yield Record(stream=stream, data=row.to_dict())
 
     def _read_json(self, file_path: Path, stream: str) -> Iterator[Record]:
-        """Read JSON file (array of objects)"""
+        logger.debug(
+            "filesystem_read_json_requested",
+            file=str(file_path),
+        )
+
         with open(file_path, encoding="utf-8") as f:
             data = json.load(f)
 
@@ -195,7 +313,11 @@ class FileSystemSource(SourceConnector):
             yield Record(stream=stream, data=data)
 
     def _read_jsonl(self, file_path: Path, stream: str) -> Iterator[Record]:
-        """Read JSON Lines file"""
+        logger.debug(
+            "filesystem_read_jsonl_requested",
+            file=str(file_path),
+        )
+
         with open(file_path, encoding="utf-8") as f:
             for line in f:
                 if line.strip():
@@ -203,8 +325,11 @@ class FileSystemSource(SourceConnector):
                     yield Record(stream=stream, data=data)
 
     def _read_csv(self, file_path: Path, stream: str) -> Iterator[Record]:
-        """Read CSV file"""
-        df = pd.read_csv(file_path)
+        logger.debug(
+            "filesystem_read_csv_requested",
+            file=str(file_path),
+        )
 
+        df = pd.read_csv(file_path)
         for _, row in df.iterrows():
             yield Record(stream=stream, data=row.to_dict())

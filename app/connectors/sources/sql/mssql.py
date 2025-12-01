@@ -1,20 +1,22 @@
 """MSSQL Source Connector
 """
 
-import logging
 from collections.abc import Iterator
 from typing import Any
 
 import pymssql
 
-from app.connectors.base import Column, ConnectionTestResult, DataType, Record, Schema, SourceConnector, State, Table
+from app.connectors.base import (
+    Column, ConnectionTestResult, DataType,
+    Record, Schema, SourceConnector, State, Table
+)
+from app.core.logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class MSSQLSource(SourceConnector):
-    """MSSQL source connector
-    """
+    """MSSQL source connector."""
 
     TYPE_MAPPING = {
         "int": DataType.INTEGER,
@@ -47,62 +49,150 @@ class MSSQLSource(SourceConnector):
 
     def __init__(self, config: dict[str, Any]):
         super().__init__(config)
-        self.host = config["host"]  # server
+
+        self.host = config["host"]
         self.port = config.get("port", 1433)
         self.user = config["user"]
         self.password = config["password"]
         self.database = config["database"]
         self._batch_size = config.get("batch_size", 1000)
+
         self._connection = None
 
+        logger.debug(
+            "mssql_source_initialized",
+            host=self.host,
+            port=self.port,
+            database=self.database,
+            batch_size=self._batch_size,
+        )
+
+    # ===================================================================
+    # Connection Handling
+    # ===================================================================
     def connect(self) -> None:
-        if self._connection is None:
-            try:
-                # pymssql connects using 'server' argument which can include port
-                server = f"{self.host}:{self.port}" if self.port else self.host
-                self._connection = pymssql.connect(
-                    server=server, user=self.user, password=self.password, database=self.database, as_dict=True
-                )
-                logger.info(f"Connected to MSSQL: {self.host}")
-            except Exception as e:
-                logger.error(f"Failed to connect to MSSQL: {e!s}")
-                raise
+        if self._connection is not None:
+            return
+
+        logger.info(
+            "mssql_connect_requested",
+            host=self.host,
+            port=self.port,
+            database=self.database,
+        )
+
+        try:
+            server = f"{self.host}:{self.port}" if self.port else self.host
+            self._connection = pymssql.connect(
+                server=server,
+                user=self.user,
+                password=self.password,
+                database=self.database,
+                as_dict=True,
+            )
+
+            logger.info(
+                "mssql_connect_success",
+                host=self.host,
+                database=self.database,
+            )
+
+        except Exception as e:
+            logger.error(
+                "mssql_connect_failed",
+                host=self.host,
+                database=self.database,
+                error=str(e),
+                exc_info=True,
+            )
+            raise
 
     def disconnect(self) -> None:
         if self._connection:
+            logger.debug("mssql_disconnect_requested")
             self._connection.close()
             self._connection = None
+            logger.debug("mssql_disconnected")
 
+    # ===================================================================
+    # Test Connection
+    # ===================================================================
     def test_connection(self) -> ConnectionTestResult:
+        logger.info(
+            "mssql_test_connection_requested",
+            host=self.host,
+            database=self.database,
+        )
+
         try:
             self.connect()
             cursor = self._connection.cursor()
             cursor.execute("SELECT @@VERSION as version")
             row = cursor.fetchone()
-            version = row["version"]
             cursor.close()
-            return ConnectionTestResult(success=True, message="Connected", metadata={"version": version})
+
+            version = row["version"]
+
+            logger.info(
+                "mssql_test_connection_success",
+                host=self.host,
+                version=version,
+            )
+
+            return ConnectionTestResult(
+                success=True,
+                message="Connected",
+                metadata={"version": version},
+            )
+
         except Exception as e:
+            logger.error(
+                "mssql_test_connection_failed",
+                host=self.host,
+                database=self.database,
+                error=str(e),
+                exc_info=True,
+            )
             return ConnectionTestResult(success=False, message=str(e))
+
         finally:
             self.disconnect()
 
+    # ===================================================================
+    # Schema Discovery
+    # ===================================================================
     def discover_schema(self) -> Schema:
+        logger.info(
+            "mssql_schema_discovery_requested",
+            database=self.database,
+        )
+
         self.connect()
-        tables = []
         cursor = self._connection.cursor()
+
         try:
             cursor.execute("""
-                SELECT TABLE_SCHEMA, TABLE_NAME 
-                FROM INFORMATION_SCHEMA.TABLES 
+                SELECT TABLE_SCHEMA, TABLE_NAME
+                FROM INFORMATION_SCHEMA.TABLES
                 WHERE TABLE_TYPE = 'BASE TABLE'
             """)
+
             table_list = cursor.fetchall()
+            logger.debug(
+                "mssql_schema_table_list_retrieved",
+                count=len(table_list),
+            )
+
+            tables = []
 
             for tbl in table_list:
                 schema_name = tbl["TABLE_SCHEMA"]
                 table_name = tbl["TABLE_NAME"]
-                full_name = f"{schema_name}.{table_name}"
+
+                logger.debug(
+                    "mssql_schema_table_processing",
+                    table=f"{schema_name}.{table_name}",
+                )
 
                 cursor.execute(
                     """
@@ -116,40 +206,94 @@ class MSSQLSource(SourceConnector):
 
                 columns = []
                 for col in cursor.fetchall():
-                    c_name = col["COLUMN_NAME"]
-                    c_type = col["DATA_TYPE"]
-                    is_nullable = col["IS_NULLABLE"] == "YES"
+                    name = col["COLUMN_NAME"]
+                    sql_type = col["DATA_TYPE"]
+                    nullable = col["IS_NULLABLE"] == "YES"
+                    default = col["COLUMN_DEFAULT"]
 
-                    d_type = self.TYPE_MAPPING.get(c_type, DataType.STRING)
+                    mapped_type = self.TYPE_MAPPING.get(sql_type, DataType.STRING)
 
                     columns.append(
-                        Column(name=c_name, data_type=d_type, nullable=is_nullable, default_value=col["COLUMN_DEFAULT"])
+                        Column(
+                            name=name,
+                            data_type=mapped_type,
+                            nullable=nullable,
+                            default_value=default,
+                        )
                     )
 
                 cursor.execute(f"SELECT COUNT(*) as cnt FROM {schema_name}.{table_name}")
                 count = cursor.fetchone()["cnt"]
 
-                tables.append(Table(name=full_name, schema=schema_name, columns=columns, row_count=count))
+                tables.append(
+                    Table(
+                        name=f"{schema_name}.{table_name}",
+                        schema=schema_name,
+                        columns=columns,
+                        row_count=count,
+                    )
+                )
+
+            logger.info(
+                "mssql_schema_discovery_completed",
+                table_count=len(tables),
+            )
 
             return Schema(tables=tables)
+
+        except Exception as e:
+            logger.error(
+                "mssql_schema_discovery_failed",
+                error=str(e),
+                exc_info=True,
+            )
+            return Schema(tables=[])
+
         finally:
             cursor.close()
             self.disconnect()
 
-    def read(self, stream: str, state: State | None = None, query: str | None = None) -> Iterator[Record]:
+    # ===================================================================
+    # Read Data
+    # ===================================================================
+    def read(
+        self,
+        stream: str,
+        state: State | None = None,
+        query: str | None = None,
+    ) -> Iterator[Record]:
+        logger.info(
+            "mssql_read_requested",
+            stream=stream,
+            database=self.database,
+            has_state=bool(state),
+            has_query=bool(query),
+        )
+
         self.connect()
         cursor = self._connection.cursor()
+
         try:
-            # Stream expected to be schema.table
+            # Build SQL query
             if query:
                 sql = query
                 params = []
             elif state and state.cursor_field:
-                sql = f"SELECT * FROM {stream} WHERE {state.cursor_field} > %s ORDER BY {state.cursor_field}"
+                sql = (
+                    f"SELECT * FROM {stream} "
+                    f"WHERE {state.cursor_field} > %s "
+                    f"ORDER BY {state.cursor_field}"
+                )
                 params = [state.cursor_value]
             else:
                 sql = f"SELECT * FROM {stream}"
                 params = []
+
+            logger.debug(
+                "mssql_read_query_prepared",
+                sql_preview=sql[:250],
+                param_count=len(params),
+            )
 
             cursor.execute(sql, tuple(params))
 
@@ -157,18 +301,62 @@ class MSSQLSource(SourceConnector):
                 rows = cursor.fetchmany(self._batch_size)
                 if not rows:
                     break
+
+                logger.debug(
+                    "mssql_read_batch_fetched",
+                    batch_size=len(rows),
+                )
+
                 for row in rows:
                     yield Record(stream=stream, data=row)
+
+        except Exception as e:
+            logger.error(
+                "mssql_read_failed",
+                stream=stream,
+                error=str(e),
+                exc_info=True,
+            )
+            raise
+
         finally:
             cursor.close()
             self.disconnect()
 
+    # ===================================================================
+    # Record Count
+    # ===================================================================
     def get_record_count(self, stream: str) -> int:
+        logger.info(
+            "mssql_record_count_requested",
+            stream=stream,
+            database=self.database,
+        )
+
         self.connect()
         cursor = self._connection.cursor()
+
         try:
             cursor.execute(f"SELECT COUNT(*) as cnt FROM {stream}")
-            return cursor.fetchone()["cnt"]
+            count = cursor.fetchone()["cnt"]
+
+            logger.info(
+                "mssql_record_count_retrieved",
+                stream=stream,
+                record_count=count,
+            )
+
+            return count
+
+        except Exception as e:
+            logger.error(
+                "mssql_record_count_failed",
+                stream=stream,
+                error=str(e),
+                exc_info=True,
+            )
+            raise
+
         finally:
             cursor.close()
             self.disconnect()

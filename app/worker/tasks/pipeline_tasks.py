@@ -18,9 +18,9 @@ from app.pipeline.processors.base import BaseProcessor
 from app.pipeline.processors.noop import NoOpProcessor
 from app.pipeline.processors.sql import DuckDBProcessor
 from app.pipeline.processors.transformer import ExampleTransformerProcessor
-from app.services.alert_service import AlertService
+from app.services.alert import AlertService
 from app.services.encryption import get_encryption_service, initialize_encryption_service
-from app.services.job_service import JobService
+from app.services.job import JobService
 from app.worker.app import celery_app
 from app.core.config import settings
 

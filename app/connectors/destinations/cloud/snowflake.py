@@ -4,12 +4,15 @@ from typing import Any, List
 import snowflake.connector
 from app.connectors.base import Column, ConnectionTestResult, DestinationConnector, Record
 from app.connectors.utils import map_data_type_to_sql_type
+from app.core.logging import get_logger
+
+logger = get_logger(__name__)
 
 
 class SnowflakeDestination(DestinationConnector):
     """
     Snowflake Destination Connector.
-    Connects to Snowflake and loads data into tables.
+    Loads data into Snowflake tables.
     """
 
     def __init__(self, config: dict[str, Any]):
@@ -21,12 +24,23 @@ class SnowflakeDestination(DestinationConnector):
         self.warehouse = config.get("warehouse")
         self.database = config.get("database")
         self.schema = config.get("schema")
-        self.table = config.get("table") # Target table name
-        self.write_mode = config.get("write_mode", "append") # "append", "overwrite"
+        self.table = config.get("table")
+        self.write_mode = config.get("write_mode", "append")
         self._batch_size = config.get("batch_size", 1000)
 
+        logger.debug(
+            "snowflake_destination_initialized",
+            account=self.account,
+            database=self.database,
+            schema=self.schema,
+            table=self.table,
+            write_mode=self.write_mode,
+        )
+
+    # ------------------------------------------------------------------
+    # Connection Handling
+    # ------------------------------------------------------------------
     def connect(self) -> None:
-        """Establish connection to Snowflake."""
         try:
             self._connection = snowflake.connector.connect(
                 user=self.username,
@@ -37,88 +51,180 @@ class SnowflakeDestination(DestinationConnector):
                 database=self.database,
                 schema=self.schema,
             )
+
+            logger.info(
+                "snowflake_connect_success",
+                account=self.account,
+                database=self.database,
+                schema=self.schema,
+            )
+
         except Exception as e:
-            raise Exception(f"Failed to connect to Snowflake: {e}")
+            logger.error(
+                "snowflake_connect_failed",
+                error=str(e),
+                exc_info=True,
+            )
+            raise
 
     def disconnect(self) -> None:
-        """Close connection to Snowflake."""
         if self._connection:
-            self._connection.close()
-            self._connection = None
+            try:
+                self._connection.close()
+                logger.debug("snowflake_connection_closed")
+            except Exception as e:
+                logger.warning(
+                    "snowflake_connection_close_failed",
+                    error=str(e),
+                    exc_info=True,
+                )
+            finally:
+                self._connection = None
 
+    # ------------------------------------------------------------------
+    # Test Connection
+    # ------------------------------------------------------------------
     def test_connection(self) -> ConnectionTestResult:
-        """Test if connection is valid and accessible."""
+        logger.info("snowflake_test_connection_started")
+
         try:
             with self:
-                # Attempt to execute a simple query
                 self._connection.cursor().execute("SELECT 1").close()
-                return ConnectionTestResult(success=True, message="Successfully connected to Snowflake.")
+
+            logger.info("snowflake_test_connection_success")
+            return ConnectionTestResult(success=True, message="Successfully connected to Snowflake.")
+
         except Exception as e:
+            logger.error(
+                "snowflake_test_connection_failed",
+                error=str(e),
+                exc_info=True,
+            )
             return ConnectionTestResult(success=False, message=f"Failed to connect to Snowflake: {e}")
 
+    # ------------------------------------------------------------------
+    # Create Table
+    # ------------------------------------------------------------------
     def create_stream(self, stream: str, schema: List[Column]) -> None:
-        """Create table if it doesn't exist."""
         if not self.database or not self.schema or not stream:
-            raise ValueError("Database, Schema, and Table name (stream) must be provided.")
+            raise ValueError("Database, Schema, and Table name must be provided.")
 
         with self:
             cursor = self._connection.cursor()
             try:
-                # Construct CREATE TABLE statement
                 columns_sql = []
                 for col in schema:
                     sql_type = map_data_type_to_sql_type(col.data_type)
                     nullable = "NULL" if col.nullable else "NOT NULL"
-                    columns_sql.append(f"{col.name} {sql_type} {nullable}")
-                
-                create_table_sql = f"CREATE TABLE IF NOT EXISTS {self.database}.{self.schema}.{stream} (\n  " \
-                                   + ",\n  ".join(columns_sql) + "\n)"
-                cursor.execute(create_table_sql)
+                    columns_sql.append(f'{col.name} {sql_type} {nullable}')
+
+                create_sql = (
+                    f"CREATE TABLE IF NOT EXISTS "
+                    f"{self.database}.{self.schema}.{stream} ("
+                    + ", ".join(columns_sql)
+                    + ")"
+                )
+
+                logger.debug(
+                    "snowflake_create_table_sql_generated",
+                    table=stream,
+                    columns=len(schema),
+                )
+
+                cursor.execute(create_sql)
+
+                logger.info(
+                    "snowflake_create_table_completed",
+                    table=stream,
+                )
+
             finally:
                 cursor.close()
 
+    # ------------------------------------------------------------------
+    # Write
+    # ------------------------------------------------------------------
     def write(self, records: Iterator[Record]) -> int:
-        """Write records to Snowflake table."""
         if not self.database or not self.schema or not self.table:
-            raise ValueError("Database, Schema, and Table name must be provided in config to write data.")
+            raise ValueError("Database, Schema, and Table must be provided.")
+
+        logger.info(
+            "snowflake_write_started",
+            table=self.table,
+            batch_size=self._batch_size,
+        )
+
+        inserted_count = 0
+        batch: List[dict[str, Any]] = []
 
         with self:
             cursor = self._connection.cursor()
-            inserted_count = 0
-            batch: List[dict[str, Any]] = []
 
-            for record in records:
-                batch.append(record.data)
-                if len(batch) >= self._batch_size:
+            try:
+                for record in records:
+                    batch.append(record.data)
+
+                    if len(batch) >= self._batch_size:
+                        inserted_count += self._insert_batch(cursor, self.table, batch)
+                        batch = []
+
+                if batch:
                     inserted_count += self._insert_batch(cursor, self.table, batch)
-                    batch = []
 
-            if batch: # Insert any remaining records
-                inserted_count += self._insert_batch(cursor, self.table, batch)
+                self._connection.commit()
 
-            self._connection.commit()
-            return inserted_count
-    
+                logger.info(
+                    "snowflake_write_completed",
+                    total_inserted=inserted_count,
+                )
+
+                return inserted_count
+
+            except Exception as e:
+                logger.error(
+                    "snowflake_write_failed",
+                    error=str(e),
+                    exc_info=True,
+                )
+                raise
+
+            finally:
+                cursor.close()
+
+    # ------------------------------------------------------------------
+    # Insert Batch
+    # ------------------------------------------------------------------
     def _insert_batch(self, cursor: Any, table_name: str, batch: List[dict[str, Any]]) -> int:
-        """Helper to insert a batch of records into Snowflake."""
         if not batch:
             return 0
-        
-        # Get column names from the first record (assuming all records in batch have same schema)
+
         columns = list(batch[0].keys())
-        columns_sql = ", ".join([f'"{c}"' for c in columns]) # Quote column names for Snowflake
-
-        # Construct VALUES placeholders and data
+        columns_sql = ", ".join([f'"{c}"' for c in columns])
         placeholders = ", ".join(["%s"] * len(columns))
-        insert_sql = f"INSERT INTO {self.database}.{self.schema}.{table_name} ({columns_sql}) VALUES ({placeholders})"
 
-        data_to_insert = [[item.get(col) for col in columns] for item in batch]
+        insert_sql = (
+            f"INSERT INTO {self.database}.{self.schema}.{table_name} "
+            f"({columns_sql}) VALUES ({placeholders})"
+        )
+
+        data_rows = [[row.get(col) for col in columns] for row in batch]
 
         try:
-            # Execute batch insert
-            cursor.executemany(insert_sql, data_to_insert)
+            cursor.executemany(insert_sql, data_rows)
+
+            logger.debug(
+                "snowflake_write_batch_inserted",
+                table=table_name,
+                row_count=len(batch),
+            )
+
             return len(batch)
+
         except Exception as e:
-            print(f"Error inserting batch into Snowflake: {e}")
-            # Depending on error handling strategy, might re-raise, log, or return 0
+            logger.error(
+                "snowflake_write_batch_failed",
+                table=table_name,
+                error=str(e),
+                exc_info=True,
+            )
             return 0

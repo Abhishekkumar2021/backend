@@ -1,32 +1,38 @@
-"""Metadata Scanning API Endpoints
-Schema discovery and caching
+"""Metadata Scanning API Endpoints.
+
+Provides schema discovery, caching, and ERD data for connections.
 """
 
 import time
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Dict, List
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
-from app.api import deps
+from app.api.deps import get_db
 from app.api.v1.endpoints.connections import get_decrypted_config
 from app.connectors.factory import ConnectorFactory
-from app.models import database
+from app.core.logging import get_logger
+from app.models.database import Connection, MetadataCache
 from app.services.cache import get_cache
 
+logger = get_logger(__name__)
 router = APIRouter()
 
 
-def serialize_schema(schema) -> dict[str, Any]:
-    """Convert Schema object to JSON-serializable dict
+# ===================================================================
+# Helper Functions
+# ===================================================================
 
+def serialize_schema(schema) -> Dict[str, Any]:
+    """Convert Schema object to JSON-serializable dictionary.
+    
     Args:
         schema: Schema object from connector
-
+        
     Returns:
-        Dictionary representation
-
+        Dictionary representation of schema
     """
     return {
         "tables": [
@@ -55,33 +61,152 @@ def serialize_schema(schema) -> dict[str, Any]:
     }
 
 
-@router.post("/{connection_id}/scan", response_model=dict)
-def scan_connection_metadata(
-    connection_id: int,
-    force: bool = Query(False, description="Force fresh scan, bypass cache"),
-    background_tasks: BackgroundTasks = None,
-    db: Session = Depends(deps.get_db),
-):
-    """Scan connection and discover schema metadata
-
-    Returns tables, columns, data types, primary keys, foreign keys
-    Results are cached for 1 hour unless force=true
-
-    Query params:
-    - force: If true, bypass cache and re-scan
+def validate_source_connection(connection: Connection) -> None:
+    """Validate that connection is a source.
+    
+    Args:
+        connection: Connection object
+        
+    Raises:
+        HTTPException: If connection is not a source
     """
-    connection = db.query(database.Connection).filter(database.Connection.id == connection_id).first()
-
-    if not connection:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=f"Connection with ID {connection_id} not found"
-        )
-
     if not connection.is_source:
+        logger.warning(
+            "metadata_scan_on_destination",
+            connection_id=connection.id,
+        )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Can only scan source connections. Destinations don't have discoverable schemas.",
         )
+
+
+def update_metadata_cache(
+    db: Session,
+    connection_id: int,
+    schema_data: Dict[str, Any],
+    table_count: int,
+    column_count: int,
+    duration: float,
+) -> None:
+    """Update metadata cache in database (background task).
+    
+    This persists schema data beyond Redis cache.
+    
+    Args:
+        db: Database session
+        connection_id: Connection ID
+        schema_data: Serialized schema data
+        table_count: Number of tables
+        column_count: Total number of columns
+        duration: Scan duration in seconds
+    """
+    try:
+        cache_entry = db.query(MetadataCache).filter(
+            MetadataCache.connection_id == connection_id
+        ).first()
+
+        if cache_entry:
+            # Update existing entry
+            cache_entry.schema_data = schema_data
+            cache_entry.table_count = table_count
+            cache_entry.column_count = column_count
+            cache_entry.last_scanned_at = datetime.now(UTC)
+            cache_entry.scan_duration_seconds = duration
+            
+            logger.debug(
+                "metadata_cache_updated",
+                connection_id=connection_id,
+            )
+        else:
+            # Create new entry
+            cache_entry = MetadataCache(
+                connection_id=connection_id,
+                schema_data=schema_data,
+                table_count=table_count,
+                column_count=column_count,
+                scan_duration_seconds=duration,
+            )
+            db.add(cache_entry)
+            
+            logger.debug(
+                "metadata_cache_created",
+                connection_id=connection_id,
+            )
+
+        db.commit()
+        
+        logger.info(
+            "metadata_cache_persisted",
+            connection_id=connection_id,
+            table_count=table_count,
+            column_count=column_count,
+        )
+        
+    except Exception as e:
+        db.rollback()
+        logger.error(
+            "metadata_cache_update_failed",
+            connection_id=connection_id,
+            error=str(e),
+            exc_info=True,
+        )
+
+
+# ===================================================================
+# Schema Scanning Endpoints
+# ===================================================================
+
+@router.post(
+    "/{connection_id}/scan",
+    response_model=Dict[str, Any],
+    summary="Scan connection schema",
+)
+def scan_connection_metadata(
+    connection_id: int,
+    force: bool = Query(False, description="Force fresh scan, bypass cache"),
+    background_tasks: BackgroundTasks = None,
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    """Scan connection and discover schema metadata.
+    
+    Discovers tables, columns, data types, primary keys, and foreign keys.
+    Results are cached for 1 hour unless force=true.
+    
+    Args:
+        connection_id: Connection ID to scan
+        force: If true, bypass cache and re-scan
+        background_tasks: FastAPI background tasks
+        db: Database session
+        
+    Returns:
+        Schema metadata with scan statistics
+        
+    Raises:
+        HTTPException: If connection not found or scan fails
+    """
+    logger.info(
+        "metadata_scan_requested",
+        connection_id=connection_id,
+        force=force,
+    )
+    
+    connection = db.query(Connection).filter(
+        Connection.id == connection_id
+    ).first()
+
+    if not connection:
+        logger.warning(
+            "connection_not_found",
+            connection_id=connection_id,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Connection with ID {connection_id} not found",
+        )
+
+    # Validate is source connection
+    validate_source_connection(connection)
 
     cache = get_cache()
 
@@ -89,27 +214,56 @@ def scan_connection_metadata(
     if not force:
         cached_schema = cache.get_schema(connection_id)
         if cached_schema:
-            return {"connection_id": connection_id, "cached": True, **cached_schema}
+            logger.debug(
+                "metadata_cache_hit",
+                connection_id=connection_id,
+            )
+            return {
+                "connection_id": connection_id,
+                "cached": True,
+                **cached_schema,
+            }
 
     # Get decrypted config
     config = get_decrypted_config(connection)
 
     # Create connector instance
     try:
-        connector = ConnectorFactory.create_source(connection.connector_type.value, config)
-    except ValueError:
+        connector = ConnectorFactory.create_source(
+            connection.connector_type.value,
+            config,
+        )
+    except ValueError as e:
+        logger.error(
+            "unsupported_connector_type",
+            connection_id=connection_id,
+            connector_type=connection.connector_type,
+        )
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail=f"Unsupported connector type: {connection.connector_type}"
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unsupported connector type: {connection.connector_type}",
         )
 
     # Discover schema (this can be slow)
     start_time = time.time()
+    
+    logger.info(
+        "schema_discovery_started",
+        connection_id=connection_id,
+    )
 
     try:
         schema = connector.discover_schema()
     except Exception as e:
+        logger.error(
+            "schema_discovery_failed",
+            connection_id=connection_id,
+            error=str(e),
+            exc_info=True,
+        )
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Schema discovery failed: {e!s}"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Schema discovery failed: {str(e)}",
         )
 
     scan_duration = time.time() - start_time
@@ -117,17 +271,31 @@ def scan_connection_metadata(
     # Serialize schema
     schema_dict = serialize_schema(schema)
 
-    # Calculate stats
+    # Calculate statistics
     total_tables = len(schema.tables)
     total_columns = sum(len(table.columns) for table in schema.tables)
 
     # Cache schema for 1 hour
     cache.set_schema(connection_id, schema_dict)
+    
+    logger.info(
+        "schema_discovered",
+        connection_id=connection_id,
+        table_count=total_tables,
+        column_count=total_columns,
+        scan_duration_seconds=round(scan_duration, 2),
+    )
 
     # Update metadata cache in database (async)
     if background_tasks:
         background_tasks.add_task(
-            _update_metadata_cache, db, connection_id, schema_dict, total_tables, total_columns, scan_duration
+            update_metadata_cache,
+            db,
+            connection_id,
+            schema_dict,
+            total_tables,
+            total_columns,
+            scan_duration,
         )
 
     return {
@@ -140,57 +308,47 @@ def scan_connection_metadata(
     }
 
 
-def _update_metadata_cache(
-    db: Session, connection_id: int, schema_data: dict[str, Any], table_count: int, column_count: int, duration: float
-):
-    """Background task to update metadata cache in database
-    This persists schema data beyond Redis cache
+@router.get(
+    "/{connection_id}/metadata",
+    response_model=Dict[str, Any],
+    summary="Get cached metadata",
+)
+def get_connection_metadata(
+    connection_id: int,
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    """Get cached metadata for a connection.
+    
+    Returns data from Redis cache or database cache.
+    Does NOT trigger a new scan - use /scan endpoint for that.
+    
+    Args:
+        connection_id: Connection ID
+        db: Database session
+        
+    Returns:
+        Cached metadata
+        
+    Raises:
+        HTTPException: If connection not found or no cache exists
     """
-    try:
-        # Check if cache entry exists
-        cache_entry = (
-            db.query(database.MetadataCache).filter(database.MetadataCache.connection_id == connection_id).first()
-        )
-
-        if cache_entry:
-            # Update existing
-            cache_entry.schema_data = schema_data
-            cache_entry.table_count = table_count
-            cache_entry.column_count = column_count
-            cache_entry.last_scanned_at = datetime.now(UTC)
-            cache_entry.scan_duration_seconds = duration
-        else:
-            # Create new
-            cache_entry = database.MetadataCache(
-                connection_id=connection_id,
-                schema_data=schema_data,
-                table_count=table_count,
-                column_count=column_count,
-                scan_duration_seconds=duration,
-            )
-            db.add(cache_entry)
-
-        db.commit()
-    except Exception as e:
-        db.rollback()
-        # Log error but don't fail the request
-        import logging
-
-        logging.exception(f"Failed to update metadata cache: {e!s}")
-
-
-@router.get("/{connection_id}/metadata", response_model=dict)
-def get_connection_metadata(connection_id: int, db: Session = Depends(deps.get_db)):
-    """Get cached metadata for a connection
-
-    Returns data from Redis cache or database cache
-    Does NOT trigger a new scan - use /scan endpoint for that
-    """
-    connection = db.query(database.Connection).filter(database.Connection.id == connection_id).first()
+    logger.debug(
+        "metadata_retrieval_requested",
+        connection_id=connection_id,
+    )
+    
+    connection = db.query(Connection).filter(
+        Connection.id == connection_id
+    ).first()
 
     if not connection:
+        logger.warning(
+            "connection_not_found",
+            connection_id=connection_id,
+        )
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=f"Connection with ID {connection_id} not found"
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Connection with ID {connection_id} not found",
         )
 
     cache = get_cache()
@@ -198,14 +356,29 @@ def get_connection_metadata(connection_id: int, db: Session = Depends(deps.get_d
     # Try Redis cache first
     cached_schema = cache.get_schema(connection_id)
     if cached_schema:
-        return {"connection_id": connection_id, "source": "redis_cache", **cached_schema}
+        logger.debug(
+            "metadata_from_redis_cache",
+            connection_id=connection_id,
+        )
+        return {
+            "connection_id": connection_id,
+            "source": "redis_cache",
+            **cached_schema,
+        }
 
     # Try database cache
-    db_cache = db.query(database.MetadataCache).filter(database.MetadataCache.connection_id == connection_id).first()
+    db_cache = db.query(MetadataCache).filter(
+        MetadataCache.connection_id == connection_id
+    ).first()
 
     if db_cache:
         # Restore to Redis cache
         cache.set_schema(connection_id, db_cache.schema_data)
+        
+        logger.debug(
+            "metadata_from_database_cache",
+            connection_id=connection_id,
+        )
 
         return {
             "connection_id": connection_id,
@@ -217,129 +390,295 @@ def get_connection_metadata(connection_id: int, db: Session = Depends(deps.get_d
             **db_cache.schema_data,
         }
 
+    logger.warning(
+        "no_metadata_cache_found",
+        connection_id=connection_id,
+    )
+    
     raise HTTPException(
-        status_code=status.HTTP_404_NOT_FOUND, detail="No cached metadata found. Use /scan endpoint to discover schema."
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail="No cached metadata found. Use /scan endpoint to discover schema.",
     )
 
 
-@router.get("/{connection_id}/tables", response_model=dict)
-def list_tables(connection_id: int, db: Session = Depends(deps.get_db)):
-    """Get list of tables (lightweight, without full column details)
+# ===================================================================
+# Table Information Endpoints
+# ===================================================================
 
-    Useful for UI dropdowns and table selection
+@router.get(
+    "/{connection_id}/tables",
+    response_model=Dict[str, Any],
+    summary="List tables",
+)
+def list_tables(
+    connection_id: int,
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    """Get list of tables without full column details.
+    
+    Lightweight endpoint useful for UI dropdowns and table selection.
+    
+    Args:
+        connection_id: Connection ID
+        db: Database session
+        
+    Returns:
+        List of tables with basic information
+        
+    Raises:
+        HTTPException: If no metadata found
     """
+    logger.debug(
+        "table_list_requested",
+        connection_id=connection_id,
+    )
+    
     # Get cached metadata
     try:
         metadata = get_connection_metadata(connection_id, db)
     except HTTPException as e:
-        if e.status_code == 404:
+        if e.status_code == status.HTTP_404_NOT_FOUND:
             raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND, detail="No metadata found. Please scan the connection first."
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="No metadata found. Please scan the connection first.",
             )
         raise
 
-    # Extract just table names and row counts
+    # Extract table summaries
     tables = [
         {
             "name": table["name"],
             "schema": table["schema"],
             "row_count": table["row_count"],
             "column_count": len(table["columns"]),
+            "description": table.get("description"),
         }
         for table in metadata.get("tables", [])
     ]
+    
+    logger.debug(
+        "table_list_retrieved",
+        connection_id=connection_id,
+        table_count=len(tables),
+    )
 
-    return {"connection_id": connection_id, "total_tables": len(tables), "tables": tables}
+    return {
+        "connection_id": connection_id,
+        "total_tables": len(tables),
+        "tables": tables,
+    }
 
 
-@router.get("/{connection_id}/tables/{table_name}", response_model=dict)
-def get_table_details(connection_id: int, table_name: str, db: Session = Depends(deps.get_db)):
-    """Get detailed information about a specific table
-
-    Returns columns, data types, constraints
+@router.get(
+    "/{connection_id}/tables/{table_name}",
+    response_model=Dict[str, Any],
+    summary="Get table details",
+)
+def get_table_details(
+    connection_id: int,
+    table_name: str,
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    """Get detailed information about a specific table.
+    
+    Returns columns, data types, and constraints.
+    
+    Args:
+        connection_id: Connection ID
+        table_name: Table name to retrieve
+        db: Database session
+        
+    Returns:
+        Table details with all columns
+        
+    Raises:
+        HTTPException: If table not found
     """
+    logger.debug(
+        "table_details_requested",
+        connection_id=connection_id,
+        table_name=table_name,
+    )
+    
     # Get cached metadata
     try:
         metadata = get_connection_metadata(connection_id, db)
     except HTTPException as e:
-        if e.status_code == 404:
+        if e.status_code == status.HTTP_404_NOT_FOUND:
             raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND, detail="No metadata found. Please scan the connection first."
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="No metadata found. Please scan the connection first.",
             )
         raise
 
     # Find table
-    table = next((t for t in metadata.get("tables", []) if t["name"] == table_name), None)
+    table = next(
+        (t for t in metadata.get("tables", []) if t["name"] == table_name),
+        None,
+    )
 
     if not table:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=f"Table '{table_name}' not found in connection metadata"
+        logger.warning(
+            "table_not_found",
+            connection_id=connection_id,
+            table_name=table_name,
         )
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Table '{table_name}' not found in connection metadata",
+        )
+    
+    logger.debug(
+        "table_details_retrieved",
+        connection_id=connection_id,
+        table_name=table_name,
+    )
 
-    return {"connection_id": connection_id, **table}
+    return {
+        "connection_id": connection_id,
+        **table,
+    }
 
 
-@router.get("/{connection_id}/erd", response_model=dict)
-def get_erd_data(connection_id: int, db: Session = Depends(deps.get_db)):
-    """Get Entity-Relationship Diagram data
+# ===================================================================
+# ERD (Entity-Relationship Diagram) Endpoint
+# ===================================================================
 
-    Returns nodes (tables) and edges (foreign key relationships)
-    Formatted for React Flow or similar visualization libraries
+@router.get(
+    "/{connection_id}/erd",
+    response_model=Dict[str, Any],
+    summary="Get ERD data",
+)
+def get_erd_data(
+    connection_id: int,
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    """Get Entity-Relationship Diagram data.
+    
+    Returns nodes (tables) and edges (foreign key relationships).
+    Formatted for React Flow or similar visualization libraries.
+    
+    Args:
+        connection_id: Connection ID
+        db: Database session
+        
+    Returns:
+        ERD data with nodes and edges
+        
+    Raises:
+        HTTPException: If no metadata found
     """
+    logger.debug(
+        "erd_data_requested",
+        connection_id=connection_id,
+    )
+    
     # Get cached metadata
     try:
         metadata = get_connection_metadata(connection_id, db)
     except HTTPException as e:
-        if e.status_code == 404:
+        if e.status_code == status.HTTP_404_NOT_FOUND:
             raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND, detail="No metadata found. Please scan the connection first."
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="No metadata found. Please scan the connection first.",
             )
         raise
 
     # Build nodes (tables)
     nodes = []
     for table in metadata.get("tables", []):
-        nodes.append(
-            {
-                "id": table["name"],
-                "label": table["name"],
-                "row_count": table["row_count"],
-                "columns": len(table["columns"]),
-                "primary_keys": [col["name"] for col in table["columns"] if col["primary_key"]],
-            }
-        )
+        nodes.append({
+            "id": table["name"],
+            "label": table["name"],
+            "row_count": table["row_count"],
+            "columns": len(table["columns"]),
+            "primary_keys": [
+                col["name"] for col in table["columns"] if col["primary_key"]
+            ],
+        })
 
-    # Build edges (foreign keys)
+    # Build edges (foreign key relationships)
     edges = []
     for table in metadata.get("tables", []):
         for col in table["columns"]:
             if col["foreign_key"]:
-                # foreign_key format: "table_name.column_name"
-                target_table, target_column = col["foreign_key"].split(".")
-                edges.append(
-                    {
+                try:
+                    # foreign_key format: "table_name.column_name"
+                    target_table, target_column = col["foreign_key"].split(".", 1)
+                    edges.append({
                         "id": f"{table['name']}.{col['name']}-{target_table}.{target_column}",
                         "source": table["name"],
                         "target": target_table,
                         "source_column": col["name"],
                         "target_column": target_column,
-                    }
-                )
+                    })
+                except ValueError:
+                    logger.warning(
+                        "invalid_foreign_key_format",
+                        connection_id=connection_id,
+                        table=table["name"],
+                        column=col["name"],
+                        foreign_key=col["foreign_key"],
+                    )
+    
+    logger.debug(
+        "erd_data_retrieved",
+        connection_id=connection_id,
+        node_count=len(nodes),
+        edge_count=len(edges),
+    )
 
-    return {"connection_id": connection_id, "nodes": nodes, "edges": edges}
+    return {
+        "connection_id": connection_id,
+        "nodes": nodes,
+        "edges": edges,
+    }
 
 
-@router.delete("/{connection_id}/cache", response_model=dict)
-def clear_metadata_cache(connection_id: int, db: Session = Depends(deps.get_db)):
-    """Clear metadata cache (both Redis and database)
+# ===================================================================
+# Cache Management Endpoints
+# ===================================================================
 
-    Forces next scan to be fresh
+@router.delete(
+    "/{connection_id}/cache",
+    response_model=Dict[str, Any],
+    summary="Clear metadata cache",
+)
+def clear_metadata_cache(
+    connection_id: int,
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    """Clear metadata cache (both Redis and database).
+    
+    Forces next scan to be fresh.
+    
+    Args:
+        connection_id: Connection ID
+        db: Database session
+        
+    Returns:
+        Clear result
+        
+    Raises:
+        HTTPException: If connection not found
     """
-    connection = db.query(database.Connection).filter(database.Connection.id == connection_id).first()
+    logger.info(
+        "metadata_cache_clear_requested",
+        connection_id=connection_id,
+    )
+    
+    connection = db.query(Connection).filter(
+        Connection.id == connection_id
+    ).first()
 
     if not connection:
+        logger.warning(
+            "connection_not_found",
+            connection_id=connection_id,
+        )
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=f"Connection with ID {connection_id} not found"
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Connection with ID {connection_id} not found",
         )
 
     # Clear Redis cache
@@ -347,10 +686,28 @@ def clear_metadata_cache(connection_id: int, db: Session = Depends(deps.get_db))
     cache.invalidate_schema(connection_id)
 
     # Clear database cache
-    db_cache = db.query(database.MetadataCache).filter(database.MetadataCache.connection_id == connection_id).first()
+    db_cache = db.query(MetadataCache).filter(
+        MetadataCache.connection_id == connection_id
+    ).first()
 
     if db_cache:
         db.delete(db_cache)
         db.commit()
+        
+        logger.info(
+            "metadata_cache_cleared",
+            connection_id=connection_id,
+            cleared_from_database=True,
+        )
+    else:
+        logger.info(
+            "metadata_cache_cleared",
+            connection_id=connection_id,
+            cleared_from_database=False,
+        )
 
-    return {"connection_id": connection_id, "cache_cleared": True, "message": "Metadata cache cleared successfully"}
+    return {
+        "connection_id": connection_id,
+        "cache_cleared": True,
+        "message": "Metadata cache cleared successfully",
+    }

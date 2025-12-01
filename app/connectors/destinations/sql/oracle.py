@@ -1,155 +1,274 @@
-"""Oracle Destination Connector
-"""
+"""Oracle Destination Connector (Structured Logging Version)"""
 
-import logging
 from collections.abc import Iterator
 from typing import Any
 
 import oracledb
 
 from app.connectors.base import Column, ConnectionTestResult, DataType, DestinationConnector, Record
+from app.core.logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class OracleDestination(DestinationConnector):
-    """Oracle destination connector
-    """
+    """Oracle destination connector."""
 
     TYPE_MAPPING = {
         DataType.INTEGER: "NUMBER",
         DataType.FLOAT: "NUMBER",
-        DataType.STRING: "VARCHAR2(4000)",  # Default, can be CLOB if needed
-        DataType.BOOLEAN: "NUMBER(1)",  # Oracle has no BOOLEAN in SQL until recently (23c), stick to 0/1 standard
+        DataType.STRING: "VARCHAR2(4000)",
+        DataType.BOOLEAN: "NUMBER(1)",   # BOOLEAN emulated as 0/1
         DataType.DATE: "DATE",
         DataType.DATETIME: "TIMESTAMP",
-        DataType.JSON: "CLOB",  # Or JSON type in new Oracle
+        DataType.JSON: "CLOB",
         DataType.BINARY: "BLOB",
         DataType.NULL: "VARCHAR2(255)",
     }
 
     def __init__(self, config: dict[str, Any]):
         super().__init__(config)
+
         self.user = config["user"]
         self.password = config["password"]
         self.dsn = config["dsn"]
         self._batch_size = config.get("batch_size", 1000)
         self._connection = None
 
+        logger.debug(
+            "oracle_destination_initialized",
+            dsn=self.dsn,
+            batch_size=self._batch_size,
+        )
+
+    # ----------------------------------------------------------------------
+    # Connection Handling
+    # ----------------------------------------------------------------------
     def connect(self) -> None:
-        if self._connection is None:
-            try:
-                self._connection = oracledb.connect(user=self.user, password=self.password, dsn=self.dsn)
-                self._connection.autocommit = False
-                logger.info(f"Connected to Oracle Destination: {self.dsn}")
-            except Exception as e:
-                logger.error(f"Failed to connect to Oracle: {e!s}")
-                raise
+        if self._connection is not None:
+            return
+
+        logger.info("oracle_destination_connecting", dsn=self.dsn)
+
+        try:
+            self._connection = oracledb.connect(
+                user=self.user,
+                password=self.password,
+                dsn=self.dsn,
+            )
+            self._connection.autocommit = False
+
+            logger.info("oracle_destination_connected", dsn=self.dsn)
+
+        except Exception as e:
+            logger.error(
+                "oracle_destination_connection_failed",
+                dsn=self.dsn,
+                error=str(e),
+                exc_info=True,
+            )
+            raise
 
     def disconnect(self) -> None:
-        if self._connection:
-            try:
-                self._connection.commit()
-                self._connection.close()
-            except Exception as e:
-                logger.warning(f"Error closing connection: {e!s}")
-            finally:
-                self._connection = None
+        if not self._connection:
+            return
 
+        try:
+            self._connection.commit()
+            logger.debug("oracle_destination_commit_success")
+        except Exception as e:
+            logger.warning(
+                "oracle_destination_commit_failed",
+                error=str(e),
+                exc_info=True,
+            )
+
+        try:
+            self._connection.close()
+            logger.info("oracle_destination_disconnected")
+        except Exception as e:
+            logger.warning(
+                "oracle_destination_disconnect_failed",
+                error=str(e),
+                exc_info=True,
+            )
+        finally:
+            self._connection = None
+
+    # ----------------------------------------------------------------------
+    # Test Connection
+    # ----------------------------------------------------------------------
     def test_connection(self) -> ConnectionTestResult:
+        logger.info("oracle_destination_test_connection_started", dsn=self.dsn)
+
         try:
             self.connect()
             cursor = self._connection.cursor()
             cursor.execute("SELECT * FROM v$version")
             version = cursor.fetchone()[0]
             cursor.close()
-            return ConnectionTestResult(success=True, message="Connected", metadata={"version": version})
+
+            logger.info(
+                "oracle_destination_test_connection_success",
+                version=version,
+            )
+
+            return ConnectionTestResult(
+                success=True,
+                message="Connected",
+                metadata={"version": version},
+            )
+
         except Exception as e:
+            logger.error(
+                "oracle_destination_test_connection_failed",
+                error=str(e),
+                exc_info=True,
+            )
             return ConnectionTestResult(success=False, message=str(e))
+
         finally:
             self.disconnect()
 
+    # ----------------------------------------------------------------------
+    # Create Stream (Table)
+    # ----------------------------------------------------------------------
     def create_stream(self, stream: str, schema: list[Column]) -> None:
         self.connect()
+
+        logger.info("oracle_destination_create_stream_started", stream=stream)
+
         cursor = self._connection.cursor()
+
         try:
             col_defs = []
             for col in schema:
                 ora_type = self.TYPE_MAPPING.get(col.data_type, "VARCHAR2(4000)")
-                nullable = "" if col.nullable else "NOT NULL"
+                nullable = "" if not col.nullable else "NULL"
                 col_defs.append(f'"{col.name}" {ora_type} {nullable}')
 
-            # PK
             pks = [f'"{c.name}"' for c in schema if c.primary_key]
             if pks:
                 col_defs.append(f"PRIMARY KEY ({', '.join(pks)})")
 
             sql = f'CREATE TABLE "{stream}" ({", ".join(col_defs)})'
 
-            # Oracle doesn't have IF NOT EXISTS, catch error
+            logger.debug("oracle_destination_create_table_sql_prepared", stream=stream)
+
             try:
                 cursor.execute(sql)
+                logger.info("oracle_destination_table_created", stream=stream)
             except oracledb.DatabaseError as e:
                 (error,) = e.args
-                if error.code == 955:  # ORA-00955: name is already used by an existing object
-                    logger.info(f"Table {stream} already exists")
+                if error.code == 955:  # ORA-00955
+                    logger.info("oracle_destination_table_exists", stream=stream)
                 else:
+                    logger.error(
+                        "oracle_destination_create_stream_failed",
+                        stream=stream,
+                        error=str(e),
+                        exc_info=True,
+                    )
                     raise
 
             self._connection.commit()
-        except Exception:
+
+        except Exception as e:
+            logger.error(
+                "oracle_destination_create_stream_exception",
+                stream=stream,
+                error=str(e),
+                exc_info=True,
+            )
             self._connection.rollback()
             raise
+
         finally:
             cursor.close()
             self.disconnect()
 
+    # ----------------------------------------------------------------------
+    # Write Records
+    # ----------------------------------------------------------------------
     def write(self, records: Iterator[Record]) -> int:
+        logger.info("oracle_destination_write_started", batch_size=self._batch_size)
+
         self.connect()
         cursor = self._connection.cursor()
+
         total = 0
         buffer = []
         current_stream = None
 
         try:
             for record in records:
-                if current_stream and current_stream != record.stream:
-                    self._flush(cursor, current_stream, buffer)
-                    total += len(buffer)
+                if current_stream and record.stream != current_stream:
+                    total += self._flush(cursor, current_stream, buffer)
                     buffer = []
 
                 current_stream = record.stream
                 buffer.append(record.data)
 
                 if len(buffer) >= self._batch_size:
-                    self._flush(cursor, current_stream, buffer)
-                    total += len(buffer)
+                    total += self._flush(cursor, current_stream, buffer)
                     buffer = []
 
             if buffer:
-                self._flush(cursor, current_stream, buffer)
-                total += len(buffer)
+                total += self._flush(cursor, current_stream, buffer)
 
             self._connection.commit()
+
+            logger.info(
+                "oracle_destination_write_completed",
+                total_records=total,
+            )
+
             return total
-        except Exception:
+
+        except Exception as e:
             self._connection.rollback()
+            logger.error(
+                "oracle_destination_write_failed",
+                error=str(e),
+                exc_info=True,
+            )
             raise
+
         finally:
+            cursor.close()
             self.disconnect()
 
-    def _flush(self, cursor, stream: str, data: list[dict[str, Any]]) -> None:
+    # ----------------------------------------------------------------------
+    # Batch Flush
+    # ----------------------------------------------------------------------
+    def _flush(self, cursor, stream: str, data: list[dict[str, Any]]) -> int:
         if not data:
-            return
-        keys = list(data[0].keys())
-        cols = ", ".join([f'"{k}"' for k in keys])
-        placeholders = ", ".join([f":{i + 1}" for i in range(len(keys))])
+            return 0
 
-        sql = f'INSERT INTO "{stream}" ({cols}) VALUES ({placeholders})'
+        try:
+            keys = list(data[0].keys())
+            cols = ", ".join([f'"{k}"' for k in keys])
+            placeholders = ", ".join([f":{i+1}" for i in range(len(keys))])
 
-        # Convert dicts to list of tuples for executemany
-        values = []
-        for item in data:
-            values.append([item.get(k) for k in keys])
+            sql = f'INSERT INTO "{stream}" ({cols}) VALUES ({placeholders})'
 
-        cursor.executemany(sql, values)
+            values = [[item.get(k) for k in keys] for item in data]
+
+            cursor.executemany(sql, values)
+
+            logger.debug(
+                "oracle_destination_write_batch_success",
+                stream=stream,
+                records=len(values),
+            )
+
+            return len(values)
+
+        except Exception as e:
+            logger.error(
+                "oracle_destination_write_batch_failed",
+                stream=stream,
+                error=str(e),
+                exc_info=True,
+            )
+            return 0

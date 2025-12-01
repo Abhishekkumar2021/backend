@@ -1,15 +1,19 @@
 from collections.abc import Iterator
 from typing import Any, List
 
-from app.connectors.base import ConnectionTestResult, DestinationConnector, Record, Column
 from pymongo import MongoClient, errors
 from pymongo.errors import ConnectionFailure, OperationFailure
+
+from app.connectors.base import ConnectionTestResult, DestinationConnector, Record, Column
+from app.core.logging import get_logger
+
+logger = get_logger(__name__)
 
 
 class MongoDBDestination(DestinationConnector):
     """
     MongoDB Destination Connector.
-    Connects to a MongoDB database and loads data into collections.
+    Handles writing batches of records into a MongoDB collection.
     """
 
     def __init__(self, config: dict[str, Any]):
@@ -23,8 +27,26 @@ class MongoDBDestination(DestinationConnector):
         self.auth_source = config.get("auth_source", self.database)
         self._batch_size = config.get("batch_size", 1000)
 
+        logger.debug(
+            "mongodb_destination_initialized",
+            host=self.host,
+            port=self.port,
+            database=self.database,
+            collection=self.collection,
+        )
+
+    # ----------------------------------------------------------------------
+    # Connection
+    # ----------------------------------------------------------------------
     def connect(self) -> None:
         """Establish connection to MongoDB."""
+        logger.info(
+            "mongodb_destination_connecting",
+            host=self.host,
+            port=self.port,
+            database=self.database,
+        )
+
         try:
             self._connection = MongoClient(
                 host=self.host,
@@ -32,95 +54,156 @@ class MongoDBDestination(DestinationConnector):
                 username=self.username,
                 password=self.password,
                 authSource=self.auth_source,
-                serverSelectionTimeoutMS=5000, # 5 second timeout
+                serverSelectionTimeoutMS=5000,
             )
-            # The ismaster command is cheap and does not require auth.
-            # This will raise an exception if the connection fails.
-            self._connection.admin.command('ismaster')
+            self._connection.admin.command("ismaster")
+
+            logger.info(
+                "mongodb_destination_connected",
+                host=self.host,
+                port=self.port,
+            )
+
         except ConnectionFailure as e:
+            logger.error("mongodb_destination_connection_failed", error=str(e), exc_info=True)
             raise ConnectionFailure(f"MongoDB connection failed: {e}")
+
         except OperationFailure as e:
+            logger.error("mongodb_destination_auth_failed", error=str(e), exc_info=True)
             raise OperationFailure(f"MongoDB authentication failed: {e.details.get('errmsg', str(e))}")
+
         except Exception as e:
+            logger.error("mongodb_destination_connect_unexpected_error", error=str(e), exc_info=True)
             raise Exception(f"An unexpected error occurred during MongoDB connection: {e}")
 
+    # ----------------------------------------------------------------------
+    # Disconnect
+    # ----------------------------------------------------------------------
     def disconnect(self) -> None:
-        """Close connection to MongoDB."""
+        """Close MongoDB connection."""
         if self._connection:
-            self._connection.close()
-            self._connection = None
+            try:
+                self._connection.close()
+                logger.info("mongodb_destination_disconnected")
+            except Exception as e:
+                logger.warning("mongodb_destination_disconnect_failed", error=str(e))
+            finally:
+                self._connection = None
 
+    # ----------------------------------------------------------------------
+    # Test Connection
+    # ----------------------------------------------------------------------
     def test_connection(self) -> ConnectionTestResult:
-        """Test if connection is valid and accessible."""
+        """Test if connection is valid."""
+        logger.info("mongodb_destination_test_connection_started")
+
         try:
-            with self: # Use context manager to ensure connection is closed
-                return ConnectionTestResult(success=True, message="Successfully connected to MongoDB.")
+            with self:
+                pass
+
+            logger.info("mongodb_destination_test_connection_success")
+            return ConnectionTestResult(success=True, message="Successfully connected to MongoDB.")
+
         except ConnectionFailure as e:
+            logger.error("mongodb_destination_test_connection_failed", error=str(e))
             return ConnectionTestResult(success=False, message=f"Failed to connect to MongoDB: {e}")
+
         except OperationFailure as e:
-            return ConnectionTestResult(success=False, message=f"MongoDB authentication failed: {e.details.get('errmsg', str(e))}")
+            logger.error("mongodb_destination_test_auth_failed", error=str(e))
+            msg = e.details.get("errmsg", str(e))
+            return ConnectionTestResult(success=False, message=f"MongoDB authentication failed: {msg}")
+
         except Exception as e:
+            logger.error("mongodb_destination_test_unexpected_error", error=str(e), exc_info=True)
             return ConnectionTestResult(success=False, message=f"An unexpected error occurred: {e}")
 
+    # ----------------------------------------------------------------------
+    # Write
+    # ----------------------------------------------------------------------
     def write(self, records: Iterator[Record]) -> int:
-        """Write records to MongoDB collection."""
+        """Write records into MongoDB."""
         if not self.database:
-            raise ValueError("Database name must be provided in config to write data.")
+            raise ValueError("Database name must be provided.")
         if not self.collection:
-            raise ValueError("Collection name must be provided in config to write data.")
+            raise ValueError("Collection name must be provided.")
+
+        logger.info(
+            "mongodb_destination_write_started",
+            database=self.database,
+            collection=self.collection,
+            batch_size=self._batch_size,
+        )
+
+        inserted_count = 0
+        batch: List[dict[str, Any]] = []
 
         with self:
             db = self._connection[self.database]
             collection = db[self.collection]
-            
-            inserted_count = 0
-            batch: List[dict[str, Any]] = []
 
             for record in records:
                 batch.append(record.data)
+
                 if len(batch) >= self._batch_size:
-                    try:
-                        result = collection.insert_many(batch)
-                        inserted_count += len(result.inserted_ids)
-                        batch = []
-                    except errors.BulkWriteError as bwe:
-                        # Log or handle individual write errors if necessary
-                        print(f"Bulk write error: {bwe.details}")
-                        inserted_count += bwe.details['nInserted']
-                        batch = [] # Clear batch even on error to prevent re-processing
-                    except Exception as e:
-                        # Handle other potential errors during insert
-                        print(f"Error during bulk insert: {e}")
-                        batch = []
+                    inserted_count += self._flush_batch(collection, batch)
+                    batch = []
 
-            if batch: # Insert any remaining records
-                try:
-                    result = collection.insert_many(batch)
-                    inserted_count += len(result.inserted_ids)
-                except errors.BulkWriteError as bwe:
-                    print(f"Bulk write error on remaining batch: {bwe.details}")
-                    inserted_count += bwe.details['nInserted']
-                except Exception as e:
-                    print(f"Error during bulk insert of remaining batch: {e}")
+            if batch:
+                inserted_count += self._flush_batch(collection, batch)
 
-            return inserted_count
+        logger.info("mongodb_destination_write_completed", records_inserted=inserted_count)
+        return inserted_count
 
+    # Internal batch-flush helper
+    def _flush_batch(self, collection, batch: List[dict[str, Any]]) -> int:
+        """Insert a batch into MongoDB with structured logging."""
+        try:
+            result = collection.insert_many(batch)
+            count = len(result.inserted_ids)
+
+            logger.debug(
+                "mongodb_destination_write_batch_success",
+                inserted_count=count,
+            )
+            return count
+
+        except errors.BulkWriteError as bwe:
+            # Only logs metadata (never logs actual documents)
+            inserted = bwe.details.get("nInserted", 0)
+            logger.error(
+                "mongodb_destination_bulk_write_error",
+                inserted=inserted,
+                error=str(bwe),
+                exc_info=True,
+            )
+            return inserted
+
+        except Exception as e:
+            logger.error(
+                "mongodb_destination_insert_failed",
+                error=str(e),
+                exc_info=True,
+            )
+            return 0
+
+    # ----------------------------------------------------------------------
+    # Stream Creation
+    # ----------------------------------------------------------------------
     def create_stream(self, stream: str, schema: List[Column]) -> None:
-        """
-        In MongoDB, collections are created implicitly on first insert.
-        This method can be used for explicit validation or indexing if needed.
-        """
+        """Ensure collection exists; optionally create indexes."""
         if not self.database or not stream:
             raise ValueError("Database and collection name must be provided.")
+
+        logger.info("mongodb_destination_create_stream", stream=stream)
+
         with self:
             db = self._connection[self.database]
-            # Ensure the collection exists by a dummy operation if it doesn't already
-            # Or add validation based on schema if required.
+
             if stream not in db.list_collection_names():
                 db.create_collection(stream)
-            
-            # Optionally, create indexes based on schema information
-            # For example, if a column is marked as primary_key, create a unique index
-            # for col in schema:
-            #     if col.primary_key:
-            #         db[stream].create_index(col.name, unique=True)
+                logger.info("mongodb_destination_stream_created", stream=stream)
+            else:
+                logger.debug("mongodb_destination_stream_exists", stream=stream)
+
+            # Future: index creation from schema
+            # logger.debug("mongodb_destination_index_creation_skipped")
