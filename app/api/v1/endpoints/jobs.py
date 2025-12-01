@@ -192,7 +192,7 @@ def trigger_pipeline_job(
         
         # Enqueue Celery task
         try:
-            task = celery_app.send_task("app.worker.run_pipeline", args=[job.id])
+            task = celery_app.send_task("app.worker.tasks.pipeline_tasks.execute_pipeline", args=[job.id])
             
             # Update job with Celery task ID
             job.celery_task_id = task.id
