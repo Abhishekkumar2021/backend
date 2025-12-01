@@ -9,6 +9,7 @@ from app.connectors.base import (
 )
 from app.connectors.utils import map_singer_type_to_data_type
 from app.core.logging import get_logger
+from app.schemas.connector_configs import SingerSourceConfig
 
 logger = get_logger(__name__)
 
@@ -19,13 +20,13 @@ class SingerSource(SourceConnector):
     Wraps any Singer.io tap to extract data.
     """
 
-    def __init__(self, config: Dict[str, Any]):
+    def __init__(self, config: SingerSourceConfig):
         super().__init__(config)
 
-        self.tap_executable = config["tap_executable"]
-        self.tap_config = config.get("tap_config", {})
-        self.tap_catalog = config.get("tap_catalog", {})
-        self.select_streams = config.get("select_streams", [])
+        self.tap_executable = config.tap_executable
+        self.tap_config = config.tap_config
+        self.tap_catalog = config.tap_catalog
+        self.select_streams = config.select_streams or []
 
         # Give this connector its own logger reference
         self.logger = logger

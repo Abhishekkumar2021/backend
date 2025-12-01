@@ -6,6 +6,7 @@ from pymongo.errors import ConnectionFailure, OperationFailure
 
 from app.connectors.base import ConnectionTestResult, DestinationConnector, Record, Column
 from app.core.logging import get_logger
+from app.schemas.connector_configs import MongoDBConfig
 
 logger = get_logger(__name__)
 
@@ -16,16 +17,19 @@ class MongoDBDestination(DestinationConnector):
     Handles writing batches of records into a MongoDB collection.
     """
 
-    def __init__(self, config: dict[str, Any]):
+    def __init__(self, config: MongoDBConfig):
         super().__init__(config)
-        self.host = config.get("host")
-        self.port = config.get("port", 27017)
-        self.username = config.get("username")
-        self.password = config.get("password")
-        self.database = config.get("database")
-        self.collection = config.get("collection")
-        self.auth_source = config.get("auth_source", self.database)
-        self._batch_size = config.get("batch_size", 1000)
+        self.host = config.host
+        self.port = config.port
+        self.username = config.username
+        self.password = config.password.get_secret_value() if config.password else None
+        self.database = config.database
+        self.auth_source = config.auth_source or self.database
+        self._batch_size = config.batch_size
+        
+        # These are pipeline-specific but passed in config due to merging in worker
+        # Since we enabled extra="allow" in BaseConnectorConfig, we can access them.
+        self.collection = getattr(config, "collection", None)
 
         logger.debug(
             "mongodb_destination_initialized",

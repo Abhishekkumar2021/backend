@@ -8,6 +8,7 @@ from app.connectors.base import (
     Column, ConnectionTestResult, DestinationConnector, Record, DataType
 )
 from app.core.logging import get_logger
+from app.schemas.connector_configs import BigQueryConfig
 
 logger = get_logger(__name__)
 
@@ -18,14 +19,16 @@ class BigQueryDestination(DestinationConnector):
     Loads data into Google BigQuery tables.
     """
 
-    def __init__(self, config: dict[str, Any]):
+    def __init__(self, config: BigQueryConfig):
         super().__init__(config)
 
-        self.project_id = config.get("project_id")
-        self.dataset_id = config.get("dataset_id")
-        self.table_id = config.get("table_id")
-        self.write_mode = config.get("write_mode", "append")
-        self._batch_size = config.get("batch_size", 1000)
+        self.project_id = config.project_id
+        self.dataset_id = config.dataset_id
+        self._batch_size = config.batch_size
+        
+        # Extra fields
+        self.table_id = getattr(config, "table_id", None)
+        self.write_mode = getattr(config, "write_mode", "append")
 
         self._client = None
 

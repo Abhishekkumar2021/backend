@@ -5,6 +5,7 @@ import snowflake.connector
 from app.connectors.base import Column, ConnectionTestResult, DestinationConnector, Record
 from app.connectors.utils import map_data_type_to_sql_type
 from app.core.logging import get_logger
+from app.schemas.connector_configs import SnowflakeConfig
 
 logger = get_logger(__name__)
 
@@ -15,18 +16,20 @@ class SnowflakeDestination(DestinationConnector):
     Loads data into Snowflake tables.
     """
 
-    def __init__(self, config: dict[str, Any]):
+    def __init__(self, config: SnowflakeConfig):
         super().__init__(config)
-        self.account = config.get("account")
-        self.username = config.get("username")
-        self.password = config.get("password")
-        self.role = config.get("role")
-        self.warehouse = config.get("warehouse")
-        self.database = config.get("database")
-        self.schema = config.get("schema")
-        self.table = config.get("table")
-        self.write_mode = config.get("write_mode", "append")
-        self._batch_size = config.get("batch_size", 1000)
+        self.account = config.account
+        self.username = config.username
+        self.password = config.password.get_secret_value()
+        self.role = config.role
+        self.warehouse = config.warehouse
+        self.database = config.database
+        self.schema = config.schema_
+        self._batch_size = config.batch_size
+        
+        # Extra fields from pipeline config
+        self.table = getattr(config, "table", None)
+        self.write_mode = getattr(config, "write_mode", "append")
 
         logger.debug(
             "snowflake_destination_initialized",

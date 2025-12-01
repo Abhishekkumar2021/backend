@@ -17,6 +17,7 @@ import pyarrow.parquet as pq
 
 from app.connectors.base import Column, ConnectionTestResult, DataType, DestinationConnector, Record
 from app.core.logging import get_logger
+from app.schemas.connector_configs import FileSystemConfig
 
 logger = get_logger(__name__)
 
@@ -40,13 +41,15 @@ class FileSystemDestination(DestinationConnector):
         DataType.NULL: ["null", "string"],
     }
 
-    def __init__(self, config: dict[str, Any]):
+    def __init__(self, config: FileSystemConfig):
         super().__init__(config)
-        self.base_path = Path(config["base_path"])
-        self.format = config.get("format", "parquet").lower()
-        self.partition_by = config.get("partition_by")
-        self.compression = config.get("compression", "snappy")
-        self.overwrite = config.get("overwrite", False)
+        self.base_path = Path(config.file_path)
+        self.format = config.format.lower()
+        
+        # Extra fields
+        self.partition_by = getattr(config, "partition_by", None)
+        self.compression = getattr(config, "compression", "snappy")
+        self.overwrite = getattr(config, "overwrite", False)
 
         logger.debug(
             "fs_destination_initialized",

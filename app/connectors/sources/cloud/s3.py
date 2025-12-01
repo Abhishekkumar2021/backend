@@ -17,6 +17,7 @@ from app.connectors.base import (
     Record, Schema, SourceConnector, State, Table
 )
 from app.core.logging import get_logger
+from app.schemas.connector_configs import S3Config
 
 logger = get_logger(__name__)
 
@@ -28,21 +29,21 @@ class S3Source(SourceConnector):
 
     SUPPORTED_FORMATS = ["parquet", "json", "csv", "jsonl"]
 
-    def __init__(self, config: dict[str, Any]):
+    def __init__(self, config: S3Config):
         super().__init__(config)
 
-        self.bucket = config["bucket"]
-        self.prefix = config.get("prefix", "").rstrip("/")
-        self.format = config.get("format", "parquet").lower()
+        self.bucket = config.bucket
+        self.prefix = config.prefix.rstrip("/") if config.prefix else ""
+        self.format = config.format.lower()
 
         if self.format not in self.SUPPORTED_FORMATS:
             raise ValueError(f"Unsupported format: {self.format}")
 
         self.s3_client = boto3.client(
             "s3",
-            aws_access_key_id=config.get("aws_access_key_id"),
-            aws_secret_access_key=config.get("aws_secret_access_key"),
-            region_name=config.get("region", "us-east-1"),
+            aws_access_key_id=config.aws_access_key_id,
+            aws_secret_access_key=config.aws_secret_access_key.get_secret_value() if config.aws_secret_access_key else None,
+            region_name=config.region,
         )
 
         logger.debug(

@@ -11,6 +11,7 @@ from app.connectors.base import (
     Schema, SourceConnector, State, Table
 )
 from app.core.logging import get_logger
+from app.schemas.connector_configs import OracleConfig
 
 logger = get_logger(__name__)
 
@@ -36,12 +37,12 @@ class OracleSource(SourceConnector):
         "LONG": DataType.STRING,
     }
 
-    def __init__(self, config: dict[str, Any]):
+    def __init__(self, config: OracleConfig):
         super().__init__(config)
-        self.user = config["user"]
-        self.password = config["password"]
-        self.dsn = config["dsn"]
-        self._batch_size = config.get("batch_size", 1000)
+        self.user = config.user
+        self.password = config.password.get_secret_value()
+        self.dsn = config.dsn
+        self._batch_size = config.batch_size
         self._connection = None
 
         logger.debug(

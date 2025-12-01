@@ -27,54 +27,69 @@ from app.connectors.sources.cloud.snowflake import SnowflakeSource
 from app.connectors.sources.cloud.bigquery import BigQuerySource
 from app.connectors.sources.integration.singer import SingerSource
 
+from app.schemas.connector_configs import (
+    PostgresConfig,
+    MySQLConfig,
+    MSSQLConfig,
+    OracleConfig,
+    SQLiteConfig,
+    MongoDBConfig,
+    SnowflakeConfig,
+    BigQueryConfig,
+    S3Config,
+    FileSystemConfig,
+    SingerSourceConfig,
+    SingerDestinationConfig,
+)
+
 
 def register_all_connectors():
     """Register all available connectors
     Called on app startup
     """
     # PostgreSQL
-    ConnectorFactory.register_source("postgresql", PostgreSQLSource)
-    ConnectorFactory.register_destination("postgresql", PostgreSQLDestination)
+    ConnectorFactory.register_source("postgresql", PostgreSQLSource, PostgresConfig)
+    ConnectorFactory.register_destination("postgresql", PostgreSQLDestination, PostgresConfig)
 
     # SQLite
-    ConnectorFactory.register_source("sqlite", SQLiteSource)
-    ConnectorFactory.register_destination("sqlite", SQLiteDestination)
+    ConnectorFactory.register_source("sqlite", SQLiteSource, SQLiteConfig)
+    ConnectorFactory.register_destination("sqlite", SQLiteDestination, SQLiteConfig)
 
     # File System
-    ConnectorFactory.register_source("local_file", FileSystemSource)
-    ConnectorFactory.register_destination("local_file", FileSystemDestination)
+    ConnectorFactory.register_source("local_file", FileSystemSource, FileSystemConfig)
+    ConnectorFactory.register_destination("local_file", FileSystemDestination, FileSystemConfig)
 
     # AWS S3
-    ConnectorFactory.register_source("s3", S3Source)
-    ConnectorFactory.register_destination("s3", S3Destination)
+    ConnectorFactory.register_source("s3", S3Source, S3Config)
+    ConnectorFactory.register_destination("s3", S3Destination, S3Config)
 
     # Oracle
-    ConnectorFactory.register_source("oracle", OracleSource)
-    ConnectorFactory.register_destination("oracle", OracleDestination)
+    ConnectorFactory.register_source("oracle", OracleSource, OracleConfig)
+    ConnectorFactory.register_destination("oracle", OracleDestination, OracleConfig)
 
     # MySQL
-    ConnectorFactory.register_source("mysql", MySQLSource)
-    ConnectorFactory.register_destination("mysql", MySQLDestination)
+    ConnectorFactory.register_source("mysql", MySQLSource, MySQLConfig)
+    ConnectorFactory.register_destination("mysql", MySQLDestination, MySQLConfig)
 
     # MSSQL
-    ConnectorFactory.register_source("mssql", MSSQLSource)
-    ConnectorFactory.register_destination("mssql", MSSQLDestination)
+    ConnectorFactory.register_source("mssql", MSSQLSource, MSSQLConfig)
+    ConnectorFactory.register_destination("mssql", MSSQLDestination, MSSQLConfig)
 
     # MongoDB
-    ConnectorFactory.register_source("mongodb", MongoDBSource)
-    ConnectorFactory.register_destination("mongodb", MongoDBDestination)
+    ConnectorFactory.register_source("mongodb", MongoDBSource, MongoDBConfig)
+    ConnectorFactory.register_destination("mongodb", MongoDBDestination, MongoDBConfig)
 
     # Snowflake
-    ConnectorFactory.register_source("snowflake", SnowflakeSource)
-    ConnectorFactory.register_destination("snowflake", SnowflakeDestination)
+    ConnectorFactory.register_source("snowflake", SnowflakeSource, SnowflakeConfig)
+    ConnectorFactory.register_destination("snowflake", SnowflakeDestination, SnowflakeConfig)
 
     # BigQuery
-    ConnectorFactory.register_source("bigquery", BigQuerySource)
-    ConnectorFactory.register_destination("bigquery", BigQueryDestination)
+    ConnectorFactory.register_source("bigquery", BigQuerySource, BigQueryConfig)
+    ConnectorFactory.register_destination("bigquery", BigQueryDestination, BigQueryConfig)
 
     # Singer.io
-    ConnectorFactory.register_source("singer", SingerSource)
-    ConnectorFactory.register_destination("singer", SingerDestination)
+    ConnectorFactory.register_source("singer", SingerSource, SingerSourceConfig)
+    ConnectorFactory.register_destination("singer", SingerDestination, SingerDestinationConfig)
 
 
 # Auto-register on import

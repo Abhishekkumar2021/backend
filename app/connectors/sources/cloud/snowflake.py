@@ -9,6 +9,7 @@ from app.connectors.base import (
 )
 from app.connectors.utils import map_sql_type_to_data_type
 from app.core.logging import get_logger
+from app.schemas.connector_configs import SnowflakeConfig
 
 logger = get_logger(__name__)
 
@@ -19,16 +20,16 @@ class SnowflakeSource(SourceConnector):
     Connects to Snowflake and extracts data.
     """
 
-    def __init__(self, config: dict[str, Any]):
+    def __init__(self, config: SnowflakeConfig):
         super().__init__(config)
 
-        self.account = config.get("account")
-        self.username = config.get("username")
-        self.password = config.get("password")
-        self.role = config.get("role")
-        self.warehouse = config.get("warehouse")
-        self.database = config.get("database")
-        self.schema = config.get("schema")
+        self.account = config.account
+        self.username = config.username
+        self.password = config.password.get_secret_value()
+        self.role = config.role
+        self.warehouse = config.warehouse
+        self.database = config.database
+        self.schema = config.schema_
 
         self._connection = None
 

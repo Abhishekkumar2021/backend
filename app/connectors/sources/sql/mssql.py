@@ -11,6 +11,7 @@ from app.connectors.base import (
     Record, Schema, SourceConnector, State, Table
 )
 from app.core.logging import get_logger
+from app.schemas.connector_configs import MSSQLConfig
 
 logger = get_logger(__name__)
 
@@ -47,15 +48,15 @@ class MSSQLSource(SourceConnector):
         "datetimeoffset": DataType.DATETIME,
     }
 
-    def __init__(self, config: dict[str, Any]):
+    def __init__(self, config: MSSQLConfig):
         super().__init__(config)
 
-        self.host = config["host"]
-        self.port = config.get("port", 1433)
-        self.user = config["user"]
-        self.password = config["password"]
-        self.database = config["database"]
-        self._batch_size = config.get("batch_size", 1000)
+        self.host = config.host
+        self.port = config.port
+        self.user = config.user
+        self.password = config.password.get_secret_value()
+        self.database = config.database
+        self._batch_size = config.batch_size
 
         self._connection = None
 

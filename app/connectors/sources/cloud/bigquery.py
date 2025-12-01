@@ -10,6 +10,7 @@ from app.connectors.base import (
 )
 from app.connectors.utils import map_bigquery_type_to_data_type
 from app.core.logging import get_logger
+from app.schemas.connector_configs import BigQueryConfig
 
 logger = get_logger(__name__)
 
@@ -20,10 +21,10 @@ class BigQuerySource(SourceConnector):
     Connects to Google BigQuery and extracts data.
     """
 
-    def __init__(self, config: dict[str, Any]):
+    def __init__(self, config: BigQueryConfig):
         super().__init__(config)
-        self.project_id = config.get("project_id")
-        self.dataset_id = config.get("dataset_id")
+        self.project_id = config.project_id
+        self.dataset_id = config.dataset_id
         self._client = None
 
         logger.debug(

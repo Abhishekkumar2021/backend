@@ -16,6 +16,7 @@ from app.connectors.base import (
     Record, Schema, SourceConnector, Table
 )
 from app.core.logging import get_logger
+from app.schemas.connector_configs import FileSystemConfig
 
 logger = get_logger(__name__)
 
@@ -27,12 +28,12 @@ class FileSystemSource(SourceConnector):
 
     SUPPORTED_FORMATS = ["parquet", "json", "csv", "jsonl"]
 
-    def __init__(self, config: dict[str, Any]):
+    def __init__(self, config: FileSystemConfig):
         super().__init__(config)
 
-        self.file_path = Path(config["file_path"])
-        self.format = config.get("format", self._detect_format()).lower()
-        self.glob_pattern = config.get("glob_pattern", "*")
+        self.file_path = Path(config.file_path)
+        self.format = config.format.lower()
+        self.glob_pattern = config.glob_pattern
 
         if self.format not in self.SUPPORTED_FORMATS:
             raise ValueError(f"Unsupported format: {self.format}")

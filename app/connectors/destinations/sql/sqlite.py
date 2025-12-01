@@ -8,6 +8,7 @@ from typing import Any
 
 from app.connectors.base import Column, ConnectionTestResult, DataType, DestinationConnector, Record
 from app.core.logging import get_logger
+from app.schemas.connector_configs import SQLiteConfig
 
 logger = get_logger(__name__)
 
@@ -29,10 +30,10 @@ class SQLiteDestination(DestinationConnector):
         DataType.NULL: "TEXT",
     }
 
-    def __init__(self, config: dict[str, Any]):
+    def __init__(self, config: SQLiteConfig):
         super().__init__(config)
-        self.database_path = config["database_path"]
-        self._batch_size = config.get("batch_size", 1000)
+        self.database_path = config.database_path
+        self._batch_size = config.batch_size
         self._connection = None
 
         logger.debug(

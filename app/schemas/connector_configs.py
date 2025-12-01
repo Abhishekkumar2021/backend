@@ -7,6 +7,9 @@ class BaseConnectorConfig(BaseModel):
     """Base configuration for all connectors"""
     batch_size: int = Field(default=1000, description="Number of records to process per batch")
 
+    class Config:
+        extra = "allow"
+
 
 class PostgresConfig(BaseConnectorConfig):
     """Configuration for PostgreSQL connector"""

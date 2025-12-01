@@ -5,6 +5,7 @@ from typing import Any, Dict, List, TextIO
 
 from app.connectors.base import Column, ConnectionTestResult, DestinationConnector, Record
 from app.core.logging import get_logger
+from app.schemas.connector_configs import SingerDestinationConfig
 
 logger = get_logger(__name__)
 
@@ -15,11 +16,11 @@ class SingerDestination(DestinationConnector):
     Wraps any Singer.io target executable.
     """
 
-    def __init__(self, config: Dict[str, Any]):
+    def __init__(self, config: SingerDestinationConfig):
         super().__init__(config)
-        self.target_executable = config["target_executable"]
-        self.target_config = config.get("target_config", {})
-        self.target_catalog = config.get("target_catalog", {})
+        self.target_executable = config.target_executable
+        self.target_config = config.target_config
+        self.target_catalog = config.target_catalog
         self._target_process: subprocess.Popen | None = None
         self._stdin: TextIO | None = None
 

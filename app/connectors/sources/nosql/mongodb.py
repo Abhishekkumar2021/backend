@@ -15,6 +15,7 @@ from app.connectors.base import (
 )
 from app.connectors.utils import map_mongo_type_to_data_type
 from app.core.logging import get_logger
+from app.schemas.connector_configs import MongoDBConfig
 
 logger = get_logger(__name__)
 
@@ -25,15 +26,15 @@ class MongoDBSource(SourceConnector):
     Connects to a MongoDB database and extracts data from collections.
     """
 
-    def __init__(self, config: dict[str, Any]):
+    def __init__(self, config: MongoDBConfig):
         super().__init__(config)
 
-        self.host = config.get("host")
-        self.port = config.get("port", 27017)
-        self.username = config.get("username")
-        self.password = config.get("password")
-        self.database = config.get("database")
-        self.auth_source = config.get("auth_source", self.database)
+        self.host = config.host
+        self.port = config.port
+        self.username = config.username
+        self.password = config.password.get_secret_value() if config.password else None
+        self.database = config.database
+        self.auth_source = config.auth_source or self.database
 
         self._connection = None
         self.logger = logger
