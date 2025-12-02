@@ -1,11 +1,21 @@
-"""MySQL Destination Connector (Structured Logging Version)"""
+"""
+MySQL Destination Connector — Unified ETL Framework Edition
+Consistent with PostgreSQL, Oracle, SQLite, FileSystem destinations.
+"""
 
+from __future__ import annotations
 from collections.abc import Iterator
-from typing import Any
+from typing import Any, List
 
 import pymysql
 
-from app.connectors.base import Column, ConnectionTestResult, DestinationConnector, Record, DataType
+from app.connectors.base import (
+    Column,
+    ConnectionTestResult,
+    DestinationConnector,
+    Record,
+    DataType,
+)
 from app.core.logging import get_logger
 from app.schemas.connector_configs import MySQLConfig
 
@@ -13,7 +23,7 @@ logger = get_logger(__name__)
 
 
 class MySQLDestination(DestinationConnector):
-    """MySQL destination connector"""
+    """MySQL destination connector (production-grade)."""
 
     TYPE_MAPPING = {
         DataType.INTEGER: "BIGINT",
@@ -29,27 +39,31 @@ class MySQLDestination(DestinationConnector):
 
     def __init__(self, config: MySQLConfig):
         super().__init__(config)
+
         self.host = config.host
         self.port = config.port
         self.user = config.user
         self.password = config.password.get_secret_value()
         self.database = config.database
         self._batch_size = config.batch_size
+
         self._connection = None
+        self.write_mode = getattr(config, "write_mode", "insert")
 
         logger.debug(
             "mysql_destination_initialized",
             host=self.host,
             port=self.port,
             database=self.database,
+            write_mode=self.write_mode,
             batch_size=self._batch_size,
         )
 
-    # ----------------------------------------------------------------------
+    # =========================================================================
     # Connection
-    # ----------------------------------------------------------------------
+    # =========================================================================
     def connect(self) -> None:
-        if self._connection is not None:
+        if self._connection:
             return
 
         logger.info(
@@ -66,95 +80,104 @@ class MySQLDestination(DestinationConnector):
                 user=self.user,
                 password=self.password,
                 database=self.database,
+                charset="utf8mb4",
                 autocommit=False,
+                cursorclass=pymysql.cursors.DictCursor,
             )
 
-            logger.info("mysql_destination_connected", host=self.host, port=self.port)
+            logger.info("mysql_destination_connected", host=self.host)
 
         except Exception as e:
             logger.error(
-                "mysql_destination_connection_failed",
+                "mysql_destination_connect_failed",
                 error=str(e),
                 exc_info=True,
             )
             raise
 
     def disconnect(self) -> None:
-        if self._connection:
-            try:
-                self._connection.commit()
-                logger.debug("mysql_destination_commit_success")
-            except Exception as e:
-                logger.warning("mysql_destination_commit_failed", error=str(e), exc_info=True)
-
-            try:
-                self._connection.close()
-                logger.info("mysql_destination_disconnected")
-            except Exception as e:
-                logger.warning("mysql_destination_disconnect_failed", error=str(e), exc_info=True)
-
-            finally:
-                self._connection = None
-
-    # ----------------------------------------------------------------------
-    # Test
-    # ----------------------------------------------------------------------
-    def test_connection(self) -> ConnectionTestResult:
-        logger.info("mysql_destination_test_connection_started")
+        if not self._connection:
+            return
 
         try:
-            self.connect()
-            with self._connection.cursor() as cursor:
-                cursor.execute("SELECT VERSION()")
-                version = cursor.fetchone()[0]
-
-            logger.info("mysql_destination_test_connection_success", version=version)
-
-            return ConnectionTestResult(
-                success=True,
-                message="Connected",
-                metadata={"version": version},
-            )
-
+            self._connection.commit()
+            logger.debug("mysql_destination_commit_success")
         except Exception as e:
-            logger.error(
-                "mysql_destination_test_connection_failed",
+            logger.warning(
+                "mysql_destination_commit_failed",
                 error=str(e),
                 exc_info=True,
             )
-            return ConnectionTestResult(success=False, message=str(e))
+
+        try:
+            self._connection.close()
+            logger.info("mysql_destination_disconnected")
+        except Exception as e:
+            logger.warning(
+                "mysql_destination_disconnect_failed",
+                error=str(e),
+                exc_info=True,
+            )
+        finally:
+            self._connection = None
+
+    # =========================================================================
+    # Test Connection
+    # =========================================================================
+    def test_connection(self) -> ConnectionTestResult:
+        logger.info("mysql_destination_test_requested")
+
+        try:
+            self.connect()
+            cur = self._connection.cursor()
+            cur.execute("SELECT VERSION()")
+            version = cur.fetchone()["VERSION()"]
+            cur.close()
+
+            logger.info("mysql_destination_test_success", version=version)
+
+            return ConnectionTestResult(True, "Connected", {"version": version})
+
+        except Exception as e:
+            logger.error(
+                "mysql_destination_test_failed",
+                error=str(e),
+                exc_info=True,
+            )
+            return ConnectionTestResult(False, str(e))
 
         finally:
             self.disconnect()
 
-    # ----------------------------------------------------------------------
-    # Create Stream (Table)
-    # ----------------------------------------------------------------------
-    def create_stream(self, stream: str, schema: list[Column]) -> None:
+    # =========================================================================
+    # Create Table
+    # =========================================================================
+    def create_stream(self, stream: str, schema: List[Column]) -> None:
         self.connect()
 
-        logger.info("mysql_destination_create_stream_started", stream=stream)
+        logger.info("mysql_destination_create_stream", stream=stream)
 
         try:
-            with self._connection.cursor() as cursor:
-                col_defs = []
-                for col in schema:
-                    my_type = self.TYPE_MAPPING.get(col.data_type, "TEXT")
-                    nullable = "" if not col.nullable else "NULL"
-                    col_defs.append(f"`{col.name}` {my_type} {nullable}")
+            cur = self._connection.cursor()
 
-                pks = [f"`{c.name}`" for c in schema if c.primary_key]
-                if pks:
-                    col_defs.append(f"PRIMARY KEY ({', '.join(pks)})")
+            col_defs = []
+            for col in schema:
+                mysql_type = self.TYPE_MAPPING.get(col.data_type, "TEXT")
+                not_null = "" if col.nullable else "NOT NULL"
+                col_defs.append(f"`{col.name}` {mysql_type} {not_null}")
 
-                sql = f"CREATE TABLE IF NOT EXISTS `{stream}` ({', '.join(col_defs)})"
+            pk_cols = [f"`{c.name}`" for c in schema if c.primary_key]
+            if pk_cols:
+                col_defs.append(f"PRIMARY KEY ({', '.join(pk_cols)})")
 
-                logger.debug("mysql_destination_create_table_sql_prepared", stream=stream)
+            sql = f"CREATE TABLE IF NOT EXISTS `{stream}` ({', '.join(col_defs)}) ENGINE=InnoDB"
 
-                cursor.execute(sql)
-                self._connection.commit()
+            logger.debug("mysql_destination_create_sql", sql_preview=sql[:200])
 
-                logger.info("mysql_destination_table_created", stream=stream)
+            cur.execute(sql)
+            self._connection.commit()
+
+            logger.info("mysql_destination_stream_created", stream=stream)
 
         except Exception as e:
             logger.error(
@@ -169,39 +192,43 @@ class MySQLDestination(DestinationConnector):
         finally:
             self.disconnect()
 
-    # ----------------------------------------------------------------------
-    # Write
-    # ----------------------------------------------------------------------
+    # =========================================================================
+    # Write Records
+    # =========================================================================
     def write(self, records: Iterator[Record]) -> int:
-        logger.info("mysql_destination_write_started", batch_size=self._batch_size)
+        logger.info(
+            "mysql_destination_write_started",
+            batch_size=self._batch_size,
+            write_mode=self.write_mode,
+        )
 
         self.connect()
-        cursor = self._connection.cursor()
+        cur = self._connection.cursor()
 
-        total = 0
         buffer = []
+        total_written = 0
         current_stream = None
 
         try:
-            for record in records:
-                if current_stream and current_stream != record.stream:
-                    total += self._flush(cursor, current_stream, buffer)
+            for rec in records:
+                if current_stream and rec.stream != current_stream:
+                    total_written += self._flush(cur, current_stream, buffer)
                     buffer = []
 
-                current_stream = record.stream
-                buffer.append(record.data)
+                current_stream = rec.stream
+                buffer.append(rec.data)
 
                 if len(buffer) >= self._batch_size:
-                    total += self._flush(cursor, current_stream, buffer)
+                    total_written += self._flush(cur, current_stream, buffer)
                     buffer = []
 
             if buffer:
-                total += self._flush(cursor, current_stream, buffer)
+                total_written += self._flush(cur, current_stream, buffer)
 
             self._connection.commit()
 
-            logger.info("mysql_destination_write_completed", records_written=total)
-            return total
+            logger.info("mysql_destination_write_success", total_records=total_written)
+            return total_written
 
         except Exception as e:
             self._connection.rollback()
@@ -213,37 +240,40 @@ class MySQLDestination(DestinationConnector):
             raise
 
         finally:
-            cursor.close()
+            cur.close()
             self.disconnect()
 
-    # ----------------------------------------------------------------------
-    # Internal Batch Flush
-    # ----------------------------------------------------------------------
-    def _flush(self, cursor, stream: str, data: list[dict[str, Any]]) -> int:
-        if not data:
+    # =========================================================================
+    # Batch Flush
+    # =========================================================================
+    def _flush(self, cur, stream: str, batch: List[dict[str, Any]]) -> int:
+        if not batch:
             return 0
 
         try:
-            keys = list(data[0].keys())
+            keys = list(batch[0].keys())
             cols = ", ".join([f"`{k}`" for k in keys])
             placeholders = ", ".join(["%s"] * len(keys))
+
             sql = f"INSERT INTO `{stream}` ({cols}) VALUES ({placeholders})"
 
-            values = [[item.get(k) for k in keys] for item in data]
+            rows = [
+                [row.get(col) for col in keys]
+                for row in batch
+            ]
 
-            cursor.executemany(sql, values)
+            cur.executemany(sql, rows)
 
             logger.debug(
-                "mysql_destination_write_batch_success",
+                "mysql_destination_batch_success",
                 stream=stream,
-                records=len(values),
+                records=len(rows),
             )
-
-            return len(values)
+            return len(rows)
 
         except Exception as e:
             logger.error(
-                "mysql_destination_write_batch_failed",
+                "mysql_destination_batch_failed",
                 stream=stream,
                 error=str(e),
                 exc_info=True,

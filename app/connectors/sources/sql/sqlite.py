@@ -1,21 +1,35 @@
-"""SQLite Source Connector
+"""
+SQLite Source Connector — Universal ETL Compatible
+--------------------------------------------------
+
+Implements universal connector contract:
+✓ get_stream_identifier
+✓ get_query
+✓ supports_streams/query
+✓ state-based incremental extraction
+✓ safe connection lifecycle
 """
 
 import sqlite3
-from collections.abc import Iterator
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 from app.connectors.base import (
-    Column, ConnectionTestResult, DataType,
-    Record, Schema, SourceConnector, State, Table
+    Record,
+    State,
+    Schema,
+    Table,
+    Column,
+    DataType,
+    ConnectionTestResult,
+    SourceConnector,
 )
-from app.core.logging import get_logger
 from app.schemas.connector_configs import SQLiteConfig
+from app.core.logging import get_logger
 
 logger = get_logger(__name__)
 
-# SQLite type mapping
+
 TYPE_MAPPING = {
     "INTEGER": DataType.INTEGER,
     "INT": DataType.INTEGER,
@@ -41,224 +55,155 @@ TYPE_MAPPING = {
 
 
 class SQLiteSource(SourceConnector):
-    """SQLite source connector"""
+    """SQLite source connector (universal ETL compatible)."""
 
+    # ------------------------------------------------------------------
+    # INIT
+    # ------------------------------------------------------------------
     def __init__(self, config: SQLiteConfig):
         super().__init__(config)
         self.database_path = config.database_path
-        self._batch_size = config.batch_size
+        self.batch_size = config.batch_size
         self._connection = None
 
         logger.debug(
             "sqlite_source_initialized",
             database_path=self.database_path,
-            batch_size=self._batch_size,
+            batch_size=self.batch_size,
         )
 
-    # ===================================================================
-    # Connection Handling
-    # ===================================================================
-    def connect(self) -> None:
-        if self._connection is not None:
+    # ------------------------------------------------------------------
+    # UNIVERSAL CONNECTOR API
+    # ------------------------------------------------------------------
+    def get_stream_identifier(self, config: dict) -> str | None:
+        """SQLite requires a table name."""
+        stream = config.get("stream")
+        if not stream:
+            raise ValueError(
+                "SQLiteSource requires 'stream' (table name) in source_config"
+            )
+        return stream
+
+    def get_query(self, config: dict) -> str | None:
+        """Return optional SQL query."""
+        return config.get("query")
+
+    def supports_streams(self) -> bool:
+        return True
+
+    def supports_query(self) -> bool:
+        return True
+
+    # ------------------------------------------------------------------
+    # CONNECTION
+    # ------------------------------------------------------------------
+    def connect(self):
+        if self._connection:
             return
-
-        logger.info(
-            "sqlite_connect_requested",
-            database_path=self.database_path,
-        )
 
         try:
             if self.database_path != ":memory:":
-                db_path = Path(self.database_path)
-                if not db_path.exists():
-                    raise FileNotFoundError(f"Database file not found: {self.database_path}")
+                if not Path(self.database_path).exists():
+                    raise FileNotFoundError(
+                        f"SQLite file not found: {self.database_path}"
+                    )
 
-            self._connection = sqlite3.connect(self.database_path, check_same_thread=False)
+            self._connection = sqlite3.connect(
+                self.database_path, check_same_thread=False
+            )
             self._connection.row_factory = sqlite3.Row
 
-            logger.info(
-                "sqlite_connect_success",
-                database_path=self.database_path,
-            )
+            logger.info("sqlite_connected", database=self.database_path)
 
         except Exception as e:
-            logger.error(
-                "sqlite_connect_failed",
-                database_path=self.database_path,
-                error=str(e),
-                exc_info=True,
-            )
+            logger.error("sqlite_connect_failed", error=str(e), exc_info=True)
             raise
 
-    def disconnect(self) -> None:
+    def disconnect(self):
         if not self._connection:
             return
 
-        logger.debug("sqlite_disconnect_requested")
-
         try:
             self._connection.close()
-            logger.debug("sqlite_disconnected")
         except Exception as e:
-            logger.warning(
-                "sqlite_disconnect_failed",
-                error=str(e),
-                exc_info=True,
-            )
+            logger.warning("sqlite_disconnect_failed", error=str(e))
         finally:
             self._connection = None
 
-    # ===================================================================
-    # Test Connection
-    # ===================================================================
+    # ------------------------------------------------------------------
+    # TEST CONNECTION
+    # ------------------------------------------------------------------
     def test_connection(self) -> ConnectionTestResult:
-        logger.info(
-            "sqlite_test_connection_requested",
-            database_path=self.database_path,
-        )
-
         try:
             self.connect()
-            cursor = self._connection.cursor()
-            cursor.execute("SELECT sqlite_version();")
-            version = cursor.fetchone()[0]
-            cursor.close()
-
-            logger.info(
-                "sqlite_test_connection_success",
-                version=version,
-            )
-
+            version = self._connection.execute("SELECT sqlite_version();").fetchone()[0]
             return ConnectionTestResult(
                 success=True,
                 message="Connected successfully",
-                metadata={"version": f"SQLite {version}"},
+                metadata={"version": version},
             )
-
-        except FileNotFoundError as e:
-            logger.error(
-                "sqlite_test_connection_missing_file",
-                database_path=self.database_path,
-                error=str(e),
-            )
-            return ConnectionTestResult(success=False, message=str(e))
-
         except Exception as e:
-            logger.error(
-                "sqlite_test_connection_failed",
-                error=str(e),
-                exc_info=True,
-            )
-            return ConnectionTestResult(
-                success=False,
-                message=f"Connection failed: {str(e)}",
-            )
-
+            return ConnectionTestResult(success=False, message=str(e))
         finally:
             self.disconnect()
 
-    # ===================================================================
-    # Schema Discovery
-    # ===================================================================
+    # ------------------------------------------------------------------
+    # SCHEMA DISCOVERY
+    # ------------------------------------------------------------------
     def discover_schema(self) -> Schema:
-        logger.info(
-            "sqlite_schema_discovery_requested",
-            database_path=self.database_path,
-        )
-
         self.connect()
         cursor = self._connection.cursor()
+
         tables = []
 
         try:
-            cursor.execute("""
-                SELECT name 
-                FROM sqlite_master 
-                WHERE type='table' 
-                  AND name NOT LIKE 'sqlite_%'
-                ORDER BY name;
-            """)
-            table_names = [row[0] for row in cursor.fetchall()]
-
-            logger.debug(
-                "sqlite_schema_table_list_retrieved",
-                table_count=len(table_names),
+            cursor.execute(
+                """
+                SELECT name FROM sqlite_master 
+                WHERE type='table' AND name NOT LIKE 'sqlite_%';
+            """
             )
 
-            for table_name in table_names:
-                logger.debug(
-                    "sqlite_schema_processing_table",
-                    table=table_name,
-                )
+            table_names = [row[0] for row in cursor.fetchall()]
 
+            for tbl in table_names:
                 # Columns
-                cursor.execute(f"PRAGMA table_info('{table_name}');")
-                column_rows = cursor.fetchall()
+                cursor.execute(f"PRAGMA table_info('{tbl}');")
+                col_rows = cursor.fetchall()
 
                 # Foreign keys
-                cursor.execute(f"PRAGMA foreign_key_list('{table_name}');")
-                fk_rows = cursor.fetchall()
-
-                foreign_keys = {
-                    fk_row[3]: f"{fk_row[2]}.{fk_row[4]}"
-                    for fk_row in fk_rows
-                }
+                cursor.execute(f"PRAGMA foreign_key_list('{tbl}');")
+                fk_map = {row[3]: f"{row[2]}.{row[4]}" for row in cursor.fetchall()}
 
                 columns = []
-                for col_row in column_rows:
-                    col_name = col_row[1]
-                    col_type = col_row[2].upper().split("(")[0]
-                    mapped_type = TYPE_MAPPING.get(col_type, DataType.STRING)
-
+                for col in col_rows:
+                    col_type = col[2].upper().split("(")[0]
                     columns.append(
                         Column(
-                            name=col_name,
-                            data_type=mapped_type,
-                            nullable=(col_row[3] == 0),
-                            primary_key=(col_row[5] > 0),
-                            foreign_key=foreign_keys.get(col_name),
-                            default_value=col_row[4],
+                            name=col[1],
+                            data_type=TYPE_MAPPING.get(col_type, DataType.STRING),
+                            nullable=(col[3] == 0),
+                            primary_key=(col[5] > 0),
+                            foreign_key=fk_map.get(col[1]),
+                            default_value=col[4],
                         )
                     )
 
-                cursor.execute(f"SELECT COUNT(*) FROM '{table_name}';")
-                row_count = cursor.fetchone()[0]
+                row_count = self._connection.execute(
+                    f'SELECT COUNT(*) FROM "{tbl}"'
+                ).fetchone()[0]
 
-                tables.append(
-                    Table(
-                        name=table_name,
-                        columns=columns,
-                        row_count=row_count,
-                    )
-                )
+                tables.append(Table(name=tbl, columns=columns, row_count=row_count))
 
-            # SQLite version
-            cursor = self._connection.cursor()
-            cursor.execute("SELECT sqlite_version();")
-            version = cursor.fetchone()[0]
-
-            logger.info(
-                "sqlite_schema_discovery_completed",
-                table_count=len(tables),
-                version=version,
-            )
-
+            version = self._connection.execute("SELECT sqlite_version();").fetchone()[0]
             return Schema(tables=tables, version=f"SQLite {version}")
-
-        except Exception as e:
-            logger.error(
-                "sqlite_schema_discovery_failed",
-                error=str(e),
-                exc_info=True,
-            )
-            raise
 
         finally:
             self.disconnect()
 
-    # ===================================================================
-    # Read Data
-    # ===================================================================
+    # ------------------------------------------------------------------
+    # READ (STATE + QUERY)
+    # ------------------------------------------------------------------
     def read(
         self,
         stream: str,
@@ -266,98 +211,49 @@ class SQLiteSource(SourceConnector):
         query: str | None = None,
     ) -> Iterator[Record]:
 
-        logger.info(
-            "sqlite_read_requested",
-            stream=stream,
-            database_path=self.database_path,
-            has_state=bool(state),
-            has_query=bool(query),
-        )
-
         self.connect()
-        cursor = self._connection.cursor()
+
+        sql = None
+        params = ()
+
+        if query:
+            sql = query
+
+        elif state and state.cursor_field:
+            sql = (
+                f'SELECT * FROM "{stream}" '
+                f'WHERE "{state.cursor_field}" > ? '
+                f'ORDER BY "{state.cursor_field}"'
+            )
+            params = (state.cursor_value,)
+
+        else:
+            sql = f'SELECT * FROM "{stream}"'
+
+        cursor = self._connection.execute(sql, params)
 
         try:
-            if query:
-                sql = query
-                params = ()
-            elif state and state.cursor_field:
-                sql = (
-                    f'SELECT * FROM "{stream}" '
-                    f'WHERE "{state.cursor_field}" > ? '
-                    f'ORDER BY "{state.cursor_field}"'
-                )
-                params = (state.cursor_value,)
-            else:
-                sql = f'SELECT * FROM "{stream}"'
-                params = ()
-
-            logger.debug(
-                "sqlite_read_query_prepared",
-                sql_preview=sql[:250],
-                param_count=len(params),
-            )
-
-            cursor.execute(sql, params)
-
             while True:
-                rows = cursor.fetchmany(self._batch_size)
+                rows = cursor.fetchmany(self.batch_size)
                 if not rows:
                     break
-
-                logger.debug(
-                    "sqlite_read_batch_fetched",
-                    batch_size=len(rows),
-                )
 
                 for row in rows:
                     yield Record(stream=stream, data=dict(row))
 
-        except Exception as e:
-            logger.error(
-                "sqlite_read_failed",
-                stream=stream,
-                error=str(e),
-                exc_info=True,
-            )
-            raise
-
         finally:
+            cursor.close()
             self.disconnect()
 
-    # ===================================================================
-    # Record Count
-    # ===================================================================
+    # ------------------------------------------------------------------
+    # COUNT
+    # ------------------------------------------------------------------
     def get_record_count(self, stream: str) -> int:
-        logger.info(
-            "sqlite_record_count_requested",
-            stream=stream,
-            database_path=self.database_path,
-        )
-
         self.connect()
-        cursor = self._connection.cursor()
-
         try:
-            cursor.execute(f'SELECT COUNT(*) FROM "{stream}"')
-            count = cursor.fetchone()[0]
-
-            logger.info(
-                "sqlite_record_count_retrieved",
-                stream=stream,
-                record_count=count,
-            )
-
-            return count
-
-        except Exception as e:
-            logger.error(
-                "sqlite_record_count_failed",
-                stream=stream,
-                error=str(e),
-                exc_info=True,
-            )
-            raise
-
+            row = self._connection.execute(
+                f'SELECT COUNT(*) FROM "{stream}"'
+            ).fetchone()
+            return row[0]
         finally:
             self.disconnect()

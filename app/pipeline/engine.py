@@ -1,496 +1,492 @@
-"""Pipeline execution engine with structured logging and error handling.
+"""
+Universal Pipeline Engine (Operator-Aware) — Improved
+-----------------------------------------------------
 
-This module contains the core pipeline execution logic that orchestrates
-data flow from source through processors to destination.
+Streaming, operator-aware pipeline engine that:
+• executes: extract -> processors... -> load
+• emits operator lifecycle events to callbacks (DB/UI/logger)
+• keeps accurate per-operator metrics without materializing full datasets
 """
 
-from typing import Any, Optional, Iterator
+from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, UTC
+from typing import Iterator, Optional, Any, List, Protocol, Callable, Generator
 
-from app.connectors.base import DestinationConnector, SourceConnector, Record, State
-from app.pipeline.processors.base import BaseProcessor
 from app.core.logging import get_logger
-from app.core.exceptions import (
-    ConnectorError,
-)
+from app.connectors.base import SourceConnector, DestinationConnector, State, Record
+from app.pipeline.processors.base import BaseProcessor
 
 logger = get_logger(__name__)
 
+
+# =============================================================================
+# CALLBACK INTERFACE
+# =============================================================================
+class PipelineCallbacks(Protocol):
+    def on_pipeline_start(self): ...
+    def on_pipeline_complete(self, metrics: dict): ...
+    def on_pipeline_fail(self, error: str, metrics: dict): ...
+
+    def on_operator_start(self, operator_type: str, operator_name: str, stream: Optional[str] = None): ...
+    def on_operator_progress(self, message: str, metadata: dict | None = None): ...
+    def on_operator_complete(
+        self,
+        operator_type: str,
+        operator_name: str,
+        records_in: int,
+        records_out: int,
+        records_failed: int,
+        duration_seconds: float,
+    ): ...
+    def on_operator_fail(
+        self,
+        operator_type: str,
+        operator_name: str,
+        error: str,
+        records_in: int,
+        records_out: int,
+        records_failed: int,
+    ): ...
+
+
+# =============================================================================
+# METRICS / RESULT
+# =============================================================================
 @dataclass
 class PipelineMetrics:
-    """Pipeline execution metrics."""
-    
     records_read: int = 0
     records_processed: int = 0
-    records_filtered: int = 0
     records_written: int = 0
     records_failed: int = 0
+
     started_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     completed_at: Optional[datetime] = None
-    
+
     @property
     def duration_seconds(self) -> Optional[float]:
-        """Calculate execution duration in seconds."""
-        if self.completed_at:
-            return (self.completed_at - self.started_at).total_seconds()
-        return None
-    
-    def to_dict(self) -> dict[str, Any]:
-        """Convert metrics to dictionary."""
+        if not self.completed_at:
+            return None
+        return (self.completed_at - self.started_at).total_seconds()
+
+    def finish(self):
+        self.completed_at = datetime.now(UTC)
+
+    def to_dict(self):
         return {
             "records_read": self.records_read,
             "records_processed": self.records_processed,
-            "records_filtered": self.records_filtered,
             "records_written": self.records_written,
             "records_failed": self.records_failed,
-            "duration_seconds": self.duration_seconds,
             "started_at": self.started_at.isoformat(),
             "completed_at": self.completed_at.isoformat() if self.completed_at else None,
+            "duration_seconds": self.duration_seconds,
         }
 
 
 @dataclass
 class PipelineResult:
-    """Pipeline execution result."""
-    
-    status: str  # "success" | "failed" | "partial"
-    stream: str
+    status: str      # "success", "failed", "partial"
     metrics: PipelineMetrics
     error: Optional[str] = None
-    errors: list[str] = field(default_factory=list)
-    
-    def to_dict(self) -> dict[str, Any]:
-        """Convert result to dictionary."""
-        result = {
-            "status": self.status,
-            "stream": self.stream,
-            **self.metrics.to_dict(),
-        }
-        
+
+    def to_dict(self):
+        base = {"status": self.status, **self.metrics.to_dict()}
         if self.error:
-            result["error"] = self.error
-        
-        if self.errors:
-            result["errors"] = self.errors
-        
-        return result
+            base["error"] = self.error
+        return base
 
 
+# =============================================================================
+# PIPELINE ENGINE
+# =============================================================================
 class PipelineEngine:
-    """Core engine to execute a data pipeline.
-    
-    Orchestrates data flow: Source → Processors → Destination
-    
-    Features:
-    - Automatic schema discovery and creation
-    - Batch processing for performance
-    - Structured error handling and logging
-    - Detailed execution metrics
-    - Graceful degradation on errors
-    
-    Example:
-        >>> engine = PipelineEngine(
-        ...     source=PostgreSQLSource(config),
-        ...     destination=SnowflakeDestination(config),
-        ...     processors=[TransformProcessor(), ValidationProcessor()],
-        ... )
-        >>> result = engine.run(stream="users", batch_size=1000)
-        >>> print(f"Wrote {result.metrics.records_written} records")
+    """
+    Streaming pipeline engine:
+    - Extraction = source.read()
+    - Transform  = chain of processors (each exposes .process(iterator))
+    - Load       = destination.write(iterator)
     """
 
     def __init__(
         self,
         source: SourceConnector,
         destination: DestinationConnector,
-        processors: Optional[list[BaseProcessor]] = None,
+        processors: Optional[List[BaseProcessor]] = None,
+        callbacks: Optional[PipelineCallbacks] = None,
     ):
-        """Initialize pipeline engine.
-        
-        Args:
-            source: Source connector instance
-            destination: Destination connector instance
-            processors: Optional list of data processors
-        """
         self.source = source
         self.destination = destination
         self.processors = processors or []
-        
+        self.callbacks = callbacks
+
         logger.info(
-            "pipeline_engine_initialized",
-            source_type=source.__class__.__name__,
-            destination_type=destination.__class__.__name__,
+            "engine_initialized",
+            source=source.__class__.__name__,
+            destination=destination.__class__.__name__,
             processor_count=len(self.processors),
         )
 
+    # ---------------------------------------------------------------------
+    # RUN
+    # ---------------------------------------------------------------------
     def run(
         self,
-        stream: str,
-        state: Optional[dict[str, Any]] = None,
-        query: Optional[str] = None,
-        batch_size: int = 1000,
+        stream: Optional[str],
+        state: Optional[dict],
+        query: Optional[Any],
     ) -> PipelineResult:
-        """Execute the pipeline for a specific stream.
-        
-        Args:
-            stream: Name of the stream/table to process
-            state: Optional state for incremental sync
-            query: Optional custom SQL query (for SQL sources)
-            batch_size: Batch size for processing (default: 1000)
-            
-        Returns:
-            PipelineResult with execution metrics and status
-            
-        Raises:
-            PipelineExecutionError: If pipeline execution fails critically
-        """
         metrics = PipelineMetrics()
-        
-        logger.info(
-            "pipeline_started",
-            stream=stream,
-            has_state=state is not None,
-            has_query=query is not None,
-            batch_size=batch_size,
-        )
+
+        if self.callbacks:
+            try:
+                self.callbacks.on_pipeline_start()
+            except Exception:
+                logger.exception("callback_on_pipeline_start_failed")
 
         try:
-            # 1. Convert state dict to State object
             state_obj = self._prepare_state(stream, state)
-            
-            # 2. Initialize source reader
-            source_iterator = self._initialize_source(stream, state_obj, query)
-            
-            # 3. Ensure destination stream exists
-            self._ensure_destination_stream(stream)
-            
-            # 4. Process and write records
-            metrics.records_written = self._process_and_write(
-                stream=stream,
-                source_iterator=source_iterator,
-                metrics=metrics,
-            )
-            
-            # 5. Mark completion
-            metrics.completed_at = datetime.now(UTC)
-            
-            logger.info(
-                "pipeline_completed",
-                stream=stream,
-                status="success",
-                **metrics.to_dict(),
-            )
-            
-            return PipelineResult(
-                status="success",
-                stream=stream,
-                metrics=metrics,
-            )
+
+            # Extract: get metered iterator
+            extract_iter = self._run_extract(stream, state_obj, query, metrics)
+
+            # Transform chain: returns an iterator that yields processed records
+            transformed_iter = self._run_transform_chain(extract_iter, metrics)
+
+            # Load: wrap counts and call destination.write which consumes the iterator
+            self._run_load(transformed_iter, metrics)
+
+            # success
+            metrics.finish()
+            if self.callbacks:
+                try:
+                    self.callbacks.on_pipeline_complete(metrics.to_dict())
+                except Exception:
+                    logger.exception("callback_on_pipeline_complete_failed")
+
+            return PipelineResult(status="success", metrics=metrics)
 
         except Exception as e:
-            metrics.completed_at = datetime.now(UTC)
-            
-            logger.error(
-                "pipeline_failed",
-                stream=stream,
-                error=str(e),
-                error_type=e.__class__.__name__,
-                **metrics.to_dict(),
-                exc_info=True,
-            )
-            
-            return PipelineResult(
-                status="failed",
-                stream=stream,
-                metrics=metrics,
-                error=str(e),
-            )
+            metrics.finish()
+            if self.callbacks:
+                try:
+                    self.callbacks.on_pipeline_fail(str(e), metrics.to_dict())
+                except Exception:
+                    logger.exception("callback_on_pipeline_fail_failed")
 
-    def _prepare_state(
+            logger.error("pipeline_failed", error=str(e), exc_info=True)
+            return PipelineResult(status="failed", metrics=metrics, error=str(e))
+
+    # ---------------------------------------------------------------------
+    # EXTRACT
+    # ---------------------------------------------------------------------
+    def _run_extract(
         self,
-        stream: str,
-        state: Optional[dict[str, Any]],
-    ) -> Optional[State]:
-        """Convert state dictionary to State object.
-        
-        Args:
-            stream: Stream name
-            state: State dictionary
-            
-        Returns:
-            State object or None
+        stream: Optional[str],
+        state_obj: Optional[State],
+        query: Optional[Any],
+        metrics: PipelineMetrics,
+    ) -> Iterator[Record]:
+        op_type = "extract"
+        op_name = "extract"
+        start_ts = datetime.now(UTC)
+
+        if self.callbacks:
+            try:
+                self.callbacks.on_operator_start(op_type, op_name, stream)
+            except Exception:
+                logger.exception("callback_on_operator_start_failed_extract")
+
+        try:
+            raw_iter = self.source.read(stream=stream, state=state_obj, query=query)
+        except Exception as e:
+            if self.callbacks:
+                try:
+                    self.callbacks.on_operator_fail(op_type, op_name, str(e), 0, 0, 0)
+                except Exception:
+                    logger.exception("callback_on_operator_fail_failed_extract")
+            raise
+
+        def metered() -> Iterator[Record]:
+            for rec in raw_iter:
+                metrics.records_read += 1
+                # periodic progress reporting
+                if self.callbacks and (metrics.records_read % 1000 == 0):
+                    try:
+                        self.callbacks.on_operator_progress(
+                            message="extraction_progress",
+                            metadata={"records_read": metrics.records_read, "stream": stream},
+                        )
+                    except Exception:
+                        logger.exception("callback_on_operator_progress_failed_extract")
+                yield rec
+
+        # fire complete operator once extraction iterator is returned (note: duration is minimal here)
+        duration = (datetime.now(UTC) - start_ts).total_seconds()
+        if self.callbacks:
+            try:
+                self.callbacks.on_operator_complete(
+                    operator_type=op_type,
+                    operator_name=op_name,
+                    records_in=0,
+                    records_out=metrics.records_read,
+                    records_failed=0,
+                    duration_seconds=duration,
+                )
+            except Exception:
+                logger.exception("callback_on_operator_complete_failed_extract")
+
+        return metered()
+
+    # ---------------------------------------------------------------------
+    # TRANSFORM CHAIN
+    # ---------------------------------------------------------------------
+    def _run_transform_chain(
+        self,
+        upstream: Iterator[Record],
+        metrics: PipelineMetrics,
+    ) -> Iterator[Record]:
         """
+        Apply processors sequentially, returning a generator that yields processed records.
+
+        Each processor receives an iterator and must itself be lazy/streaming.
+        We report operator events for each processor and update metrics.
+        """
+
+        current_iter: Iterator[Record] = upstream
+
+        for processor in self.processors:
+            proc_name = processor.__class__.__name__
+            op_type = "transform"
+            op_start = datetime.now(UTC)
+
+            records_in = 0
+            records_out = 0
+            records_failed = 0
+
+            if self.callbacks:
+                try:
+                    self.callbacks.on_operator_start(op_type, proc_name)
+                except Exception:
+                    logger.exception("callback_on_operator_start_failed_transform")
+
+            # Create wrapper iterators that count inputs and outputs
+            def counting_input(it: Iterator[Record]) -> Iterator[Record]:
+                nonlocal records_in
+                for r in it:
+                    records_in += 1
+                    yield r
+
+            try:
+                processed_iter = processor.process(counting_input(current_iter))
+
+                # Wrap processed_iter to count outputs as they are consumed downstream
+                def counting_output(it: Iterator[Record]) -> Iterator[Record]:
+                    nonlocal records_out, records_failed
+                    for r in it:
+                        try:
+                            records_out += 1
+                            metrics.records_processed += 1
+                            yield r
+                        except Exception as e_inner:
+                            records_failed += 1
+                            metrics.records_failed += 1
+                            # log but continue
+                            if self.callbacks:
+                                try:
+                                    self.callbacks.on_operator_progress(
+                                        message="processor_record_failed",
+                                        metadata={"processor": proc_name, "error": str(e_inner)},
+                                    )
+                                except Exception:
+                                    logger.exception("callback_on_operator_progress_failed_processor")
+                            # swallow record-level exception and continue
+                            continue
+
+                # Set current_iter to the new generator for next processor (do not materialize)
+                current_iter = counting_output(processed_iter)
+
+                # After wiring the processor we cannot report records_in/out/failure counts
+                # until the iterator has been consumed by downstream (load or next processor).
+                # So we will only emit on_operator_complete when the next processor (or load) consumes.
+                # To make operator events timely, we wrap current_iter so that when it is fully
+                # consumed we call on_operator_complete for this processor.
+                current_iter = self._wrap_with_completion_event(
+                    current_iter,
+                    on_complete=lambda: self._emit_processor_complete(
+                        op_type,
+                        proc_name,
+                        op_start,
+                        lambda: records_in,
+                        lambda: records_out,
+                        lambda: records_failed,
+                    ),
+                    on_fail=lambda err: self._emit_processor_fail(
+                        op_type,
+                        proc_name,
+                        err,
+                        lambda: records_in,
+                        lambda: records_out,
+                        lambda: records_failed,
+                    ),
+                )
+
+            except Exception as e:
+                # immediate processor-level failure (before consumption)
+                if self.callbacks:
+                    try:
+                        self.callbacks.on_operator_fail(op_type, proc_name, str(e), records_in, records_out, 1)
+                    except Exception:
+                        logger.exception("callback_on_operator_fail_failed_transform")
+                raise
+
+        # After chaining all processors, return the composed iterator
+        return current_iter
+
+    # ---------------------------------------------------------------------
+    # LOAD
+    # ---------------------------------------------------------------------
+    def _run_load(self, iterator: Iterator[Record], metrics: PipelineMetrics):
+        op_type = "load"
+        op_name = "destination_write"
+        start_ts = datetime.now(UTC)
+
+        if self.callbacks:
+            try:
+                self.callbacks.on_operator_start(op_type, op_name)
+            except Exception:
+                logger.exception("callback_on_operator_start_failed_load")
+
+        records_in = 0
+
+        # Wrap iterator so we can count records as destination consumes them
+        def counting_iterator(it: Iterator[Record]) -> Iterator[Record]:
+            nonlocal records_in
+            for r in it:
+                records_in += 1
+                yield r
+
+        wrapped_iter = counting_iterator(iterator)
+
+        try:
+            # Pass the wrapped iterator to destination.write (it will consume the iterator)
+            written = self.destination.write(wrapped_iter)
+            metrics.records_written = written
+
+            duration = (datetime.now(UTC) - start_ts).total_seconds()
+
+            if self.callbacks:
+                try:
+                    self.callbacks.on_operator_complete(
+                        operator_type=op_type,
+                        operator_name=op_name,
+                        records_in=records_in,
+                        records_out=written,
+                        records_failed=0,
+                        duration_seconds=duration,
+                    )
+                except Exception:
+                    logger.exception("callback_on_operator_complete_failed_load")
+
+        except Exception as e:
+            if self.callbacks:
+                try:
+                    self.callbacks.on_operator_fail(
+                        operator_type=op_type,
+                        operator_name=op_name,
+                        error=str(e),
+                        records_in=records_in,
+                        records_out=0,
+                        records_failed=records_in,
+                    )
+                except Exception:
+                    logger.exception("callback_on_operator_fail_failed_load")
+            raise
+
+    # ---------------------------------------------------------------------
+    # HELPERS: state and iterator utilities
+    # ---------------------------------------------------------------------
+    def _prepare_state(self, stream: Optional[str], state: Optional[dict]) -> Optional[State]:
         if not state:
             return None
-        
-        state_obj = State(
+        return State(
             stream=stream,
             cursor_field=state.get("cursor_field"),
             cursor_value=state.get("cursor_value"),
             metadata=state.get("metadata", {}),
         )
-        
-        logger.debug(
-            "state_prepared",
-            stream=stream,
-            cursor_field=state_obj.cursor_field,
-            cursor_value=state_obj.cursor_value,
-        )
-        
-        return state_obj
 
-    def _initialize_source(
+    def _wrap_with_completion_event(
         self,
-        stream: str,
-        state: Optional[State],
-        query: Optional[str],
+        it: Iterator[Record],
+        on_complete: Callable[[], None],
+        on_fail: Callable[[str], None],
     ) -> Iterator[Record]:
-        """Initialize source data reader.
-        
-        Args:
-            stream: Stream name
-            state: Optional state for incremental sync
-            query: Optional custom query
-            
-        Returns:
-            Iterator of Record objects
-            
-        Raises:
-            ConnectorError: If source initialization fails
         """
-        try:
-            logger.debug(
-                "initializing_source",
-                stream=stream,
-                has_state=state is not None,
-                has_query=query is not None,
-            )
-            
-            return self.source.read(stream=stream, state=state, query=query)
-            
-        except Exception as e:
-            logger.error(
-                "source_initialization_failed",
-                stream=stream,
-                error=str(e),
-                exc_info=True,
-            )
-            raise ConnectorError(f"Failed to initialize source: {e}") from e
-
-    def _ensure_destination_stream(self, stream: str) -> None:
-        """Ensure destination stream/table exists.
-        
-        Attempts to discover schema from source and create destination table.
-        Gracefully handles cases where schema discovery is not supported.
-        
-        Args:
-            stream: Stream name
+        Wrap an iterator so that when it is exhausted we call on_complete().
+        If an exception is raised while iterating, call on_fail(error) and re-raise.
         """
-        try:
-            logger.debug("discovering_schema", stream=stream)
-            
-            schema = self.source.discover_schema()
-            
-            # Find matching table schema
-            table_schema = next(
-                (table.columns for table in schema.tables if table.name == stream),
-                None
-            )
-            
-            if table_schema:
-                logger.debug(
-                    "creating_destination_stream",
-                    stream=stream,
-                    column_count=len(table_schema),
-                )
-                
-                self.destination.create_stream(stream, table_schema)
-                
-                logger.info(
-                    "destination_stream_ready",
-                    stream=stream,
-                    column_count=len(table_schema),
-                )
-            else:
-                logger.warning(
-                    "schema_not_found",
-                    stream=stream,
-                    available_tables=[t.name for t in schema.tables],
-                )
-                
-        except NotImplementedError:
-            logger.debug(
-                "schema_discovery_not_supported",
-                source_type=self.source.__class__.__name__,
-            )
-            
-        except Exception as e:
-            logger.warning(
-                "stream_creation_failed",
-                stream=stream,
-                error=str(e),
-                message="Continuing pipeline execution",
-            )
-
-    def _process_and_write(
-        self,
-        stream: str,
-        source_iterator: Iterator[Record],
-        metrics: PipelineMetrics,
-    ) -> int:
-        """Process records and write to destination.
-        
-        Args:
-            stream: Stream name
-            source_iterator: Iterator of source records
-            metrics: Metrics object to update
-            
-        Returns:
-            Number of records written
-            
-        Raises:
-            ConnectorError: If writing fails critically
-        """
-        logger.debug(
-            "processing_started",
-            stream=stream,
-            processor_count=len(self.processors),
-        )
-        
-        # Apply processors and write
-        processed_iterator = self._apply_processors(source_iterator, metrics)
-        
-        try:
-            logger.info("writing_to_destination", stream=stream)
-            
-            records_written = self.destination.write(processed_iterator)
-            
-            logger.info(
-                "write_completed",
-                stream=stream,
-                records_written=records_written,
-            )
-            
-            return records_written
-            
-        except Exception as e:
-            logger.error(
-                "destination_write_failed",
-                stream=stream,
-                error=str(e),
-                exc_info=True,
-            )
-            raise ConnectorError(f"Failed to write to destination: {e}") from e
-
-    def _apply_processors(
-        self,
-        source_iterator: Iterator[Record],
-        metrics: PipelineMetrics,
-    ) -> Iterator[Record]:
-        """Apply processors to source records using iterator chaining.
-        
-        Args:
-            source_iterator: Iterator of source records
-            metrics: Metrics object to update
-            
-        Yields:
-            Processed Record objects
-        """
-        # 1. Wrap source iterator to count reads
-        def metering_iterator(iterator):
-            for record in iterator:
-                metrics.records_read += 1
-                if metrics.records_read % 1000 == 0:
-                    logger.debug(
-                        "processing_progress",
-                        records_read=metrics.records_read,
-                    )
-                yield record
-
-        # 2. Build the chain
-        current_iterator = metering_iterator(source_iterator)
-        
-        for processor in self.processors:
+        def wrapped() -> Generator[Record, None, None]:
             try:
-                current_iterator = processor.process(current_iterator)
+                for r in it:
+                    yield r
             except Exception as e:
-                logger.error(
-                    "processor_chain_construction_failed",
-                    processor=processor.__class__.__name__,
-                    error=str(e),
-                )
+                try:
+                    on_fail(str(e))
+                except Exception:
+                    logger.exception("on_fail_callback_failed")
                 raise
+            else:
+                try:
+                    on_complete()
+                except Exception:
+                    logger.exception("on_complete_callback_failed")
+        return wrapped()
 
-        # 3. Consume the chain and count processed
-        # We iterate here to yield to the writer
-        for record in current_iterator:
-            metrics.records_processed += 1
-            yield record
-
-        logger.info(
-            "processing_complete",
-            records_read=metrics.records_read,
-            records_processed=metrics.records_processed,
-        )
-
-
-
-class PipelineEngineBuilder:
-    """Builder pattern for creating PipelineEngine instances.
-    
-    Example:
-        >>> engine = (
-        ...     PipelineEngineBuilder()
-        ...     .with_source(PostgreSQLSource(config))
-        ...     .with_destination(SnowflakeDestination(config))
-        ...     .with_processor(ValidationProcessor())
-        ...     .with_processor(TransformProcessor())
-        ...     .build()
-        ... )
-    """
-    
-    def __init__(self):
-        self._source: Optional[SourceConnector] = None
-        self._destination: Optional[DestinationConnector] = None
-        self._processors: list[BaseProcessor] = []
-    
-    def with_source(self, source: SourceConnector) -> "PipelineEngineBuilder":
-        """Set the source connector."""
-        self._source = source
-        return self
-    
-    def with_destination(self, destination: DestinationConnector) -> "PipelineEngineBuilder":
-        """Set the destination connector."""
-        self._destination = destination
-        return self
-    
-    def with_processor(self, processor: BaseProcessor) -> "PipelineEngineBuilder":
-        """Add a processor to the pipeline."""
-        self._processors.append(processor)
-        return self
-    
-    def with_processors(self, processors: list[BaseProcessor]) -> "PipelineEngineBuilder":
-        """Set multiple processors."""
-        self._processors = processors
-        return self
-    
-    def build(self) -> PipelineEngine:
-        """Build the PipelineEngine instance.
-        
-        Returns:
-            Configured PipelineEngine
-            
-        Raises:
-            ValueError: If source or destination not configured
+    def _emit_processor_complete(
+        self,
+        operator_type: str,
+        operator_name: str,
+        start_ts: datetime,
+        get_in: Callable[[], int],
+        get_out: Callable[[], int],
+        get_failed: Callable[[], int],
+    ):
         """
-        if not self._source:
-            raise ValueError("Source connector is required")
-        
-        if not self._destination:
-            raise ValueError("Destination connector is required")
-        
-        return PipelineEngine(
-            source=self._source,
-            destination=self._destination,
-            processors=self._processors,
-        )
+        Called once a processor's iterator is fully consumed.
+        """
+        try:
+            duration = (datetime.now(UTC) - start_ts).total_seconds()
+            if self.callbacks:
+                self.callbacks.on_operator_complete(
+                    operator_type=operator_type,
+                    operator_name=operator_name,
+                    records_in=get_in(),
+                    records_out=get_out(),
+                    records_failed=get_failed(),
+                    duration_seconds=duration,
+                )
+        except Exception:
+            logger.exception("emit_processor_complete_failed")
+
+    def _emit_processor_fail(
+        self,
+        operator_type: str,
+        operator_name: str,
+        error: str,
+        get_in: Callable[[], int],
+        get_out: Callable[[], int],
+        get_failed: Callable[[], int],
+    ):
+        try:
+            if self.callbacks:
+                self.callbacks.on_operator_fail(
+                    operator_type=operator_type,
+                    operator_name=operator_name,
+                    error=error,
+                    records_in=get_in(),
+                    records_out=get_out(),
+                    records_failed=get_failed(),
+                )
+        except Exception:
+            logger.exception("emit_processor_fail_failed")

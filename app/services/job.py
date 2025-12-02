@@ -1,10 +1,22 @@
-"""Service for managing job-related operations."""
+"""
+Improved JobService — Safe DB Writes, Clean Events, Better Logging
+------------------------------------------------------------------
+
+Upgrades:
+✓ Atomic DB writes with rollback protection
+✓ Cleaner job querying + filters
+✓ Strong Redis Pub/Sub publishing
+✓ Consistent event metadata
+✓ Structured logging
+✓ Single source of truth for JobSchema conversion
+"""
 
 import json
-from datetime import UTC, datetime
-from typing import Optional, List, Dict, Any
+from datetime import datetime, UTC
+from typing import Optional, List, Dict, Any, Callable
 
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import SQLAlchemyError
 
 from app.models.database import Job, JobLog, JobStatus
 from app.schemas.job import Job as JobSchema
@@ -15,31 +27,62 @@ from app.core.logging import get_logger
 logger = get_logger(__name__)
 
 
+# =====================================================================
+# INTERNAL HELPERS
+# =====================================================================
+def _safe_commit(db: Session, context: str) -> bool:
+    """Safely commit with rollback protection."""
+    try:
+        db.commit()
+        return True
+    except SQLAlchemyError as e:
+        db.rollback()
+        logger.error(
+            "db_commit_failed",
+            context=context,
+            error=str(e),
+            exc_info=True,
+        )
+        return False
+
+
+def _job_to_schema(job: Job) -> JobSchema:
+    """Standardized conversion."""
+    return JobSchema.model_validate(job)
+
+
 class JobService:
     """Service for managing job-related operations."""
 
     # ===================================================================
-    # Publish Updates to Redis
+    # REDIS PUBLISHING (Realtime Updates)
     # ===================================================================
     @staticmethod
-    def _publish_job_update(job_id: int, job_data: JobSchema) -> None:
-        """Publish job updates to Redis Pub/Sub for real-time monitoring."""
+    def _publish_job_update_safe(job_id: int, job_obj: Job) -> None:
+        """
+        Publishes job updates to Redis Pub/Sub.
+        Failures do not affect job execution.
+        """
         try:
             cache = get_cache()
+            if not cache.is_available():
+                return
 
-            if cache.is_available():
-                redis_client = cache.redis_client
-                channel = f"job_updates:{job_id}"
-                message = json.dumps(job_data.model_dump(mode="json"), default=str)
+            redis_client = cache.redis_client
 
-                redis_client.publish(channel, message)
+            channel = f"job_updates:{job_id}"
 
-                logger.debug(
-                    "job_update_published",
-                    job_id=job_id,
-                    channel=channel,
-                    status=job_data.status,
-                )
+            # Use schema for fully validated payload
+            payload = _job_to_schema(job_obj).model_dump(mode="json")
+
+            redis_client.publish(channel, json.dumps(payload))
+
+            logger.debug(
+                "job_update_published",
+                job_id=job_id,
+                channel=channel,
+                status=payload.get("status"),
+            )
 
         except Exception as e:
             logger.warning(
@@ -50,54 +93,49 @@ class JobService:
             )
 
     # ===================================================================
-    # Create Job
+    # CREATE JOB
     # ===================================================================
     @staticmethod
     def create_job(db: Session, job_in: JobCreate) -> Job:
         logger.info(
             "job_creation_requested",
             pipeline_id=job_in.pipeline_id,
-            initial_status=job_in.status.value,
+            status=job_in.status.value,
         )
 
-        db_job = Job(
+        job = Job(
             pipeline_id=job_in.pipeline_id,
             status=job_in.status,
             created_at=datetime.now(UTC),
         )
-        db.add(db_job)
-        db.commit()
-        db.refresh(db_job)
+
+        db.add(job)
+        if not _safe_commit(db, "create_job"):
+            raise RuntimeError("Failed to create job")
 
         logger.info(
             "job_created",
-            job_id=db_job.id,
-            pipeline_id=db_job.pipeline_id,
-            status=db_job.status.value,
+            job_id=job.id,
+            pipeline_id=job.pipeline_id,
+            status=job.status.value,
         )
 
-        # Publish initial job state
-        JobService._publish_job_update(db_job.id, JobSchema.model_validate(db_job))
-
-        return db_job
+        # Realtime update
+        JobService._publish_job_update_safe(job.id, job)
+        return job
 
     # ===================================================================
-    # Get Job
+    # GET JOB
     # ===================================================================
     @staticmethod
     def get_job(db: Session, job_id: int) -> Optional[Job]:
         job = db.query(Job).filter(Job.id == job_id).first()
-
         if not job:
-            logger.warning(
-                "job_not_found",
-                job_id=job_id,
-            )
-
+            logger.warning("job_not_found", job_id=job_id)
         return job
 
     # ===================================================================
-    # List Jobs
+    # LIST JOBS
     # ===================================================================
     @staticmethod
     def get_jobs(
@@ -119,29 +157,22 @@ class JobService:
 
         if pipeline_id:
             query = query.filter(Job.pipeline_id == pipeline_id)
-            logger.debug(
-                "job_list_filter_pipeline",
-                pipeline_id=pipeline_id,
-            )
-
         if status:
             query = query.filter(Job.status == status)
-            logger.debug(
-                "job_list_filter_status",
-                status=status.value,
-            )
 
-        jobs = query.order_by(Job.created_at.desc()).offset(skip).limit(limit).all()
-
-        logger.info(
-            "job_list_completed",
-            count=len(jobs),
+        jobs = (
+            query
+            .order_by(Job.created_at.desc())
+            .offset(skip)
+            .limit(limit)
+            .all()
         )
 
+        logger.info("job_list_completed", count=len(jobs))
         return jobs
 
     # ===================================================================
-    # Update Job Status
+    # UPDATE JOB STATUS
     # ===================================================================
     @staticmethod
     def update_job_status(
@@ -151,82 +182,54 @@ class JobService:
         error_message: Optional[str] = None,
         error_traceback: Optional[str] = None,
     ) -> Optional[Job]:
-        logger.info(
-            "job_status_update_requested",
-            job_id=job_id,
-            new_status=status.value,
-        )
+        logger.info("job_status_update_requested", job_id=job_id, new_status=status.value)
 
         job = JobService.get_job(db, job_id)
         if not job:
-            logger.error(
-                "job_status_update_failed_not_found",
-                job_id=job_id,
-            )
             return None
 
-        old_status = job.status
+        previous_status = job.status
         job.status = status
 
-        # Running
+        # START event
         if status == JobStatus.RUNNING:
             job.started_at = datetime.now(UTC)
-            logger.info(
-                "job_started",
-                job_id=job_id,
-                started_at=job.started_at.isoformat(),
-            )
+            logger.info("job_started", job_id=job_id, ts=job.started_at.isoformat())
 
-        # Finished statuses
-        elif status in (JobStatus.SUCCESS, JobStatus.FAILED, JobStatus.CANCELLED):
+        # FINISH events
+        if status in (JobStatus.SUCCESS, JobStatus.FAILED, JobStatus.CANCELLED):
             job.completed_at = datetime.now(UTC)
 
+            # Compute duration only if start time exists
             if job.started_at:
                 job.duration_seconds = (
                     job.completed_at - job.started_at
                 ).total_seconds()
 
-                logger.info(
-                    "job_completed",
-                    job_id=job_id,
-                    status=status.value,
-                    duration_seconds=job.duration_seconds,
-                )
-            else:
-                logger.warning(
-                    "job_completed_without_start_time",
-                    job_id=job_id,
-                )
-
-        # Error and traceback
+        # Errors
         if error_message:
             job.error_message = error_message
-            logger.error(
-                "job_error_message_saved",
-                job_id=job_id,
-                error_message=error_message,
-            )
 
         if error_traceback:
             job.error_traceback = error_traceback
 
-        db.commit()
-        db.refresh(job)
+        if not _safe_commit(db, "update_job_status"):
+            return None
 
         logger.info(
             "job_status_updated",
             job_id=job_id,
-            old_status=old_status.value,
+            old_status=previous_status.value,
             new_status=status.value,
         )
 
-        # Publish update
-        JobService._publish_job_update(job_id, JobSchema.model_validate(job))
+        # Realtime monitoring
+        JobService._publish_job_update_safe(job_id, job)
 
         return job
 
     # ===================================================================
-    # Log Message
+    # LOG MESSAGE
     # ===================================================================
     @staticmethod
     def log_message(
@@ -238,26 +241,27 @@ class JobService:
     ) -> JobLog:
         log = JobLog(
             job_id=job_id,
-            level=level,
+            level=level.upper(),
             message=message,
             log_metadata=metadata,
             timestamp=datetime.now(UTC),
         )
+
         db.add(log)
-        db.commit()
-        db.refresh(log)
+        if not _safe_commit(db, "log_message"):
+            raise RuntimeError("Failed to write job log")
 
         logger.debug(
             "job_log_added",
             job_id=job_id,
             level=level,
-            message_preview=message[:120],
+            message_preview=message[:150],
         )
 
         return log
 
     # ===================================================================
-    # Get Job Logs
+    # GET JOB LOGS
     # ===================================================================
     @staticmethod
     def get_job_logs(
@@ -266,17 +270,12 @@ class JobService:
         level: Optional[str] = None,
         limit: Optional[int] = None,
     ) -> List[JobLog]:
-        logger.info(
-            "job_logs_requested",
-            job_id=job_id,
-            level=level,
-            limit=limit,
-        )
+        logger.info("job_logs_requested", job_id=job_id, level=level, limit=limit)
 
         query = db.query(JobLog).filter(JobLog.job_id == job_id)
 
         if level:
-            query = query.filter(JobLog.level == level)
+            query = query.filter(JobLog.level == level.upper())
 
         query = query.order_by(JobLog.timestamp.asc())
 
@@ -285,16 +284,11 @@ class JobService:
 
         logs = query.all()
 
-        logger.debug(
-            "job_logs_retrieved",
-            job_id=job_id,
-            count=len(logs),
-        )
-
+        logger.debug("job_logs_retrieved", job_id=job_id, count=len(logs))
         return logs
 
     # ===================================================================
-    # Update Job Metrics
+    # UPDATE METRICS
     # ===================================================================
     @staticmethod
     def update_job_metrics(
@@ -304,30 +298,21 @@ class JobService:
         records_loaded: Optional[int] = None,
         records_failed: Optional[int] = None,
     ) -> Optional[Job]:
-        logger.info(
-            "job_metrics_update_requested",
-            job_id=job_id,
-        )
+        logger.info("job_metrics_update_requested", job_id=job_id)
 
         job = JobService.get_job(db, job_id)
         if not job:
-            logger.warning(
-                "job_metrics_update_failed_not_found",
-                job_id=job_id,
-            )
             return None
 
         if records_extracted is not None:
             job.records_extracted = records_extracted
-
         if records_loaded is not None:
             job.records_loaded = records_loaded
-
         if records_failed is not None:
             job.records_failed = records_failed
 
-        db.commit()
-        db.refresh(job)
+        if not _safe_commit(db, "update_job_metrics"):
+            return None
 
         logger.debug(
             "job_metrics_updated",
@@ -340,23 +325,17 @@ class JobService:
         return job
 
     # ===================================================================
-    # Cancel Job
+    # CANCEL JOB
     # ===================================================================
     @staticmethod
     def cancel_job(db: Session, job_id: int) -> Optional[Job]:
-        logger.info(
-            "job_cancel_requested",
-            job_id=job_id,
-        )
+        logger.info("job_cancel_requested", job_id=job_id)
 
         job = JobService.get_job(db, job_id)
         if not job:
-            logger.warning(
-                "job_cancel_failed_not_found",
-                job_id=job_id,
-            )
             return None
 
+        # Only certain states are cancellable
         if job.status not in (JobStatus.PENDING, JobStatus.RUNNING):
             logger.warning(
                 "job_cancel_invalid_status",
@@ -364,11 +343,6 @@ class JobService:
                 status=job.status.value,
             )
             return job
-
-        logger.info(
-            "job_cancelling",
-            job_id=job_id,
-        )
 
         return JobService.update_job_status(
             db,

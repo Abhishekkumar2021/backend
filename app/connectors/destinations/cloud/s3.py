@@ -1,11 +1,12 @@
-"""AWS S3 Destination Connector
+"""
+AWS S3 Destination Connector (Improved, Production-Ready)
 """
 
 import io
 import json
-from collections.abc import Iterator
 from datetime import datetime, timezone
-from typing import Any
+from collections.abc import Iterator
+from typing import Any, List, Optional
 
 import boto3
 import pandas as pd
@@ -21,8 +22,9 @@ logger = get_logger(__name__)
 
 
 class S3Destination(DestinationConnector):
-    """S3 destination connector
-    Writes data to AWS S3 in Parquet, JSON, CSV formats
+    """
+    AWS S3 Destination Connector
+    Supports Parquet, JSON, JSONL, CSV
     """
 
     SUPPORTED_FORMATS = ["parquet", "json", "csv", "jsonl"]
@@ -33,15 +35,22 @@ class S3Destination(DestinationConnector):
         self.bucket = config.bucket
         self.prefix = config.prefix.rstrip("/") if config.prefix else ""
         self.format = config.format.lower()
+
+        # Optional (aligning with FS connector)
+        self.partition_by: Optional[List[str]] = getattr(config, "partition_by", None)
         self.compression = getattr(config, "compression", "snappy")
 
         if self.format not in self.SUPPORTED_FORMATS:
-            raise ValueError(f"Unsupported format: {self.format}")
+            raise ValueError(f"Unsupported S3 format: {self.format}")
 
-        self.s3_client = boto3.client(
+        self.s3 = boto3.client(
             "s3",
             aws_access_key_id=config.aws_access_key_id,
-            aws_secret_access_key=config.aws_secret_access_key.get_secret_value() if config.aws_secret_access_key else None,
+            aws_secret_access_key=(
+                config.aws_secret_access_key.get_secret_value()
+                if config.aws_secret_access_key
+                else None
+            ),
             region_name=config.region,
         )
 
@@ -50,62 +59,26 @@ class S3Destination(DestinationConnector):
             bucket=self.bucket,
             prefix=self.prefix,
             format=self.format,
+            compression=self.compression,
+            partition_by=self.partition_by,
         )
 
-    # ===================================================================
-    # Connection Test
-    # ===================================================================
+    # ==========================================================================
+    # Test Connection
+    # ==========================================================================
     def test_connection(self) -> ConnectionTestResult:
-        logger.info(
-            "s3_test_connection_requested",
-            bucket=self.bucket,
-            prefix=self.prefix,
-        )
+        logger.info("s3_test_connection_requested", bucket=self.bucket, prefix=self.prefix)
 
         try:
-            # Check bucket existence
-            try:
-                self.s3_client.head_bucket(Bucket=self.bucket)
-            except ClientError as e:
-                code = e.response["Error"].get("Code")
+            # Verify bucket exists + access
+            self.s3.head_bucket(Bucket=self.bucket)
 
-                if code == "404":
-                    logger.warning(
-                        "s3_test_bucket_not_found",
-                        bucket=self.bucket,
-                    )
-                    return ConnectionTestResult(
-                        success=False,
-                        message=f"Bucket '{self.bucket}' does not exist",
-                    )
+            # Verify write permission
+            test_key = f"{self.prefix}/.write_test" if self.prefix else ".write_test"
+            self.s3.put_object(Bucket=self.bucket, Key=test_key, Body=b"ok")
+            self.s3.delete_object(Bucket=self.bucket, Key=test_key)
 
-                if code == "403":
-                    logger.warning(
-                        "s3_test_permission_denied",
-                        bucket=self.bucket,
-                    )
-                    return ConnectionTestResult(
-                        success=False,
-                        message=f"No access to bucket '{self.bucket}'",
-                    )
-
-                logger.error(
-                    "s3_test_unexpected_error",
-                    error=str(e),
-                    exc_info=True,
-                )
-                raise
-
-            # Test write permission
-            test_key = f"{self.prefix}/.test_write" if self.prefix else ".test_write"
-
-            self.s3_client.put_object(Bucket=self.bucket, Key=test_key, Body=b"test")
-            self.s3_client.delete_object(Bucket=self.bucket, Key=test_key)
-
-            logger.info(
-                "s3_test_connection_success",
-                bucket=self.bucket,
-            )
+            logger.info("s3_test_connection_success", bucket=self.bucket)
 
             return ConnectionTestResult(
                 success=True,
@@ -113,30 +86,29 @@ class S3Destination(DestinationConnector):
                 metadata={"bucket": self.bucket, "prefix": self.prefix, "format": self.format},
             )
 
+        except ClientError as e:
+            code = e.response["Error"].get("Code")
+            if code in ("403", "AccessDenied"):
+                msg = f"No access to bucket '{self.bucket}'"
+            elif code in ("404", "NoSuchBucket"):
+                msg = f"Bucket '{self.bucket}' does not exist"
+            else:
+                msg = f"S3 connection error: {e}"
+            return ConnectionTestResult(success=False, message=msg)
+
         except Exception as e:
-            logger.error(
-                "s3_test_connection_failed",
-                bucket=self.bucket,
-                error=str(e),
-                exc_info=True,
-            )
-            return ConnectionTestResult(
-                success=False,
-                message=f"S3 connection failed: {e}",
-            )
+            logger.error("s3_test_connection_failed", error=str(e), exc_info=True)
+            return ConnectionTestResult(success=False, message=str(e))
 
-    # ===================================================================
-    # Create Stream (noop)
-    # ===================================================================
+    # ==========================================================================
+    # Stream creation (NOOP)
+    # ==========================================================================
     def create_stream(self, stream: str, schema: list[Column]) -> None:
-        logger.info(
-            "s3_create_stream",
-            stream=stream,
-        )
+        logger.debug("s3_create_stream_noop", stream=stream)
 
-    # ===================================================================
-    # Write
-    # ===================================================================
+    # ==========================================================================
+    # Write API
+    # ==========================================================================
     def write(self, records: Iterator[Record]) -> int:
         logger.info(
             "s3_write_requested",
@@ -145,15 +117,14 @@ class S3Destination(DestinationConnector):
             format=self.format,
         )
 
-        total_written = 0
-        stream_records: dict[str, list[dict[str, Any]]] = {}
+        grouped: dict[str, List[dict[str, Any]]] = {}
 
-        # Group records by stream
         for record in records:
-            stream_records.setdefault(record.stream, []).append(record.data)
+            grouped.setdefault(record.stream, []).append(record.data)
 
-        # Write data per stream
-        for stream, data in stream_records.items():
+        total_written = 0
+
+        for stream, data in grouped.items():
             if not data:
                 continue
 
@@ -169,129 +140,114 @@ class S3Destination(DestinationConnector):
             logger.info(
                 "s3_write_stream_completed",
                 stream=stream,
-                written_count=count,
+                written=count,
             )
 
-        logger.info(
-            "s3_write_completed",
-            total_written=total_written,
-        )
-
+        logger.info("s3_write_completed", total=total_written)
         return total_written
 
-    # ===================================================================
-    # Internal Stream Writer
-    # ===================================================================
-    def _write_stream(self, stream: str, data: list[dict[str, Any]]) -> int:
+    # ==========================================================================
+    # Internal: Write per stream
+    # ==========================================================================
+    def _write_stream(self, stream: str, records: List[dict[str, Any]]) -> int:
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-        extension = self._get_file_extension()
 
-        if self.prefix:
-            s3_key = f"{self.prefix}/{stream}/{stream}_{timestamp}.{extension}"
+        # Build key path with optional partitioning
+        partition_path = ""
+        if self.partition_by:
+            first = records[0]
+            parts = []
+            for field in self.partition_by:
+                val = first.get(field)
+                val = str(val).replace("/", "_").replace(" ", "_")
+                parts.append(f"{field}={val}")
+            partition_path = "/".join(parts)
+
+        extension = self._get_extension()
+
+        if self.prefix and partition_path:
+            key = f"{self.prefix}/{stream}/{partition_path}/{stream}_{timestamp}.{extension}"
+        elif self.prefix:
+            key = f"{self.prefix}/{stream}/{stream}_{timestamp}.{extension}"
+        elif partition_path:
+            key = f"{stream}/{partition_path}/{stream}_{timestamp}.{extension}"
         else:
-            s3_key = f"{stream}/{stream}_{timestamp}.{extension}"
+            key = f"{stream}/{stream}_{timestamp}.{extension}"
 
-        logger.debug(
-            "s3_write_stream_file_prepared",
-            stream=stream,
-            s3_key=s3_key,
-        )
+        logger.debug("s3_stream_write_key", key=key)
 
         if self.format == "parquet":
-            return self._write_parquet(s3_key, data)
-        if self.format == "json":
-            return self._write_json(s3_key, data)
-        if self.format == "jsonl":
-            return self._write_jsonl(s3_key, data)
-        if self.format == "csv":
-            return self._write_csv(s3_key, data)
+            return self._write_parquet(key, records)
+        elif self.format == "json":
+            return self._write_json(key, records)
+        elif self.format == "jsonl":
+            return self._write_jsonl(key, records)
+        elif self.format == "csv":
+            return self._write_csv(key, records)
 
         raise ValueError(f"Unsupported format: {self.format}")
 
-    def _get_file_extension(self) -> str:
+    # ==========================================================================
+    # Helpers
+    # ==========================================================================
+    def _get_extension(self) -> str:
         return {
             "parquet": "parquet",
             "json": "json",
             "jsonl": "jsonl",
             "csv": "csv",
-        }.get(self.format, "dat")
+        }[self.format]
 
-    # ===================================================================
-    # Parquet Write
-    # ===================================================================
-    def _write_parquet(self, s3_key: str, data: list[dict[str, Any]]) -> int:
+    # ----------------------------------------------------------------------
+    # Parquet writer
+    # ----------------------------------------------------------------------
+    def _write_parquet(self, key: str, data: List[dict[str, Any]]) -> int:
         df = pd.DataFrame(data)
         table = pa.Table.from_pandas(df)
 
-        buffer = io.BytesIO()
+        buf = io.BytesIO()
         pq.write_table(
             table,
-            buffer,
-            compression=self.compression if self.compression != "none" else None,
+            buf,
+            compression=None if self.compression == "none" else self.compression,
         )
 
-        buffer.seek(0)
-        self.s3_client.put_object(Bucket=self.bucket, Key=s3_key, Body=buffer.getvalue())
+        buf.seek(0)
+        self.s3.put_object(Bucket=self.bucket, Key=key, Body=buf.getvalue())
 
-        logger.info(
-            "s3_write_parquet",
-            s3_key=s3_key,
-            record_count=len(data),
-        )
+        logger.info("s3_parquet_written", key=key, count=len(data))
         return len(data)
 
-    # ===================================================================
-    # JSON Write
-    # ===================================================================
-    def _write_json(self, s3_key: str, data: list[dict[str, Any]]) -> int:
-        json_data = json.dumps(data, indent=2, default=str)
-        self.s3_client.put_object(
-            Bucket=self.bucket,
-            Key=s3_key,
-            Body=json_data.encode("utf-8"),
-        )
+    # ----------------------------------------------------------------------
+    # JSON writer
+    # ----------------------------------------------------------------------
+    def _write_json(self, key: str, data: List[dict[str, Any]]) -> int:
+        body = json.dumps(data, indent=2, default=str)
+        self.s3.put_object(Bucket=self.bucket, Key=key, Body=body.encode("utf-8"))
 
-        logger.info(
-            "s3_write_json",
-            s3_key=s3_key,
-            record_count=len(data),
-        )
+        logger.info("s3_json_written", key=key, count=len(data))
         return len(data)
 
-    # ===================================================================
-    # JSONL Write
-    # ===================================================================
-    def _write_jsonl(self, s3_key: str, data: list[dict[str, Any]]) -> int:
-        jsonl_data = "\n".join(json.dumps(rec, default=str) for rec in data)
-        self.s3_client.put_object(
-            Bucket=self.bucket,
-            Key=s3_key,
-            Body=jsonl_data.encode("utf-8"),
-        )
+    # ----------------------------------------------------------------------
+    # JSONL writer
+    # ----------------------------------------------------------------------
+    def _write_jsonl(self, key: str, data: List[dict[str, Any]]) -> int:
+        lines = [json.dumps(r, default=str) for r in data]
+        body = "\n".join(lines)
 
-        logger.info(
-            "s3_write_jsonl",
-            s3_key=s3_key,
-            record_count=len(data),
-        )
+        self.s3.put_object(Bucket=self.bucket, Key=key, Body=body.encode("utf-8"))
+
+        logger.info("s3_jsonl_written", key=key, count=len(data))
         return len(data)
 
-    # ===================================================================
-    # CSV Write
-    # ===================================================================
-    def _write_csv(self, s3_key: str, data: list[dict[str, Any]]) -> int:
+    # ----------------------------------------------------------------------
+    # CSV writer
+    # ----------------------------------------------------------------------
+    def _write_csv(self, key: str, data: List[dict[str, Any]]) -> int:
         df = pd.DataFrame(data)
-        csv_data = df.to_csv(index=False)
+        body = df.to_csv(index=False)
 
-        self.s3_client.put_object(
-            Bucket=self.bucket,
-            Key=s3_key,
-            Body=csv_data.encode("utf-8"),
-        )
+        self.s3.put_object(Bucket=self.bucket, Key=key, Body=body.encode("utf-8"))
 
-        logger.info(
-            "s3_write_csv",
-            s3_key=s3_key,
-            record_count=len(data),
-        )
+        logger.info("s3_csv_written", key=key, count=len(data))
         return len(data)

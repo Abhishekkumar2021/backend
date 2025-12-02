@@ -1,12 +1,23 @@
+"""
+BigQuery Source Connector — Consistent Universal ETL Version
+"""
+
+from __future__ import annotations
 from collections.abc import Iterator
-from typing import Any, List
+from typing import Any, Optional
 
 from google.cloud import bigquery
-from google.api_core.exceptions import GoogleAPIError
+from google.api_core.exceptions import GoogleAPIError, NotFound
 
 from app.connectors.base import (
-    Column, ConnectionTestResult, DataType,
-    Record, Schema, SourceConnector, Table
+    Column,
+    ConnectionTestResult,
+    DataType,
+    Record,
+    Schema,
+    SourceConnector,
+    State,
+    Table,
 )
 from app.connectors.utils import map_bigquery_type_to_data_type
 from app.core.logging import get_logger
@@ -18,86 +29,91 @@ logger = get_logger(__name__)
 class BigQuerySource(SourceConnector):
     """
     BigQuery Source Connector.
-    Connects to Google BigQuery and extracts data.
+
+    Supports:
+    - direct table reads
+    - custom SQL queries
+    - incremental sync via replication_key
+    - schema discovery
     """
 
     def __init__(self, config: BigQueryConfig):
         super().__init__(config)
+
         self.project_id = config.project_id
         self.dataset_id = config.dataset_id
-        self._client = None
+        self.credentials_path = getattr(config, "credentials_path", None)
+
+        self._client: Optional[bigquery.Client] = None
 
         logger.debug(
             "bigquery_source_initialized",
             project_id=self.project_id,
             dataset_id=self.dataset_id,
+            credentials_path=self.credentials_path,
         )
 
     # ===================================================================
     # Connection Handling
     # ===================================================================
     def connect(self) -> None:
-        """Establish connection to BigQuery."""
+        """Establish GCP BigQuery client."""
+        if self._client is not None:
+            return
+
         logger.info(
             "bigquery_connect_requested",
             project_id=self.project_id,
+            credentials_path=self.credentials_path,
         )
 
         try:
-            self._client = bigquery.Client(project=self.project_id)
-            list(self._client.list_datasets(project=self.project_id, max_results=1))
+            if self.credentials_path:
+                self._client = bigquery.Client.from_service_account_json(
+                    self.credentials_path,
+                    project=self.project_id,
+                )
+            else:
+                # Default Credentials (ADC or GCP runtime)
+                self._client = bigquery.Client(project=self.project_id)
+
+            # Smoke test
+            list(self._client.list_datasets(max_results=1))
 
             logger.info(
                 "bigquery_connect_success",
                 project_id=self.project_id,
             )
 
-        except GoogleAPIError as e:
-            logger.error(
-                "bigquery_connect_failed_google_error",
-                project_id=self.project_id,
-                error=str(e),
-                exc_info=True,
-            )
-            raise Exception(f"Failed to connect to BigQuery: {e}")
-
         except Exception as e:
             logger.error(
-                "bigquery_connect_failed_unexpected",
+                "bigquery_connect_failed",
                 project_id=self.project_id,
                 error=str(e),
                 exc_info=True,
             )
-            raise Exception(f"An unexpected error occurred during BigQuery connection: {e}")
+            raise Exception(f"BigQuery connection failed: {e}")
 
     def disconnect(self) -> None:
-        """Disconnect the BigQuery client."""
+        """BigQuery client uses no persistent connection → safe to clear."""
         if self._client:
-            logger.debug(
-                "bigquery_disconnect_requested",
-                project_id=self.project_id,
-            )
-            self._client = None
-            logger.debug(
-                "bigquery_disconnected",
-                project_id=self.project_id,
-            )
+            logger.debug("bigquery_disconnect_requested", project_id=self.project_id)
+        self._client = None
 
     # ===================================================================
     # Test Connection
     # ===================================================================
     def test_connection(self) -> ConnectionTestResult:
-        logger.info(
-            "bigquery_test_connection_requested",
-            project_id=self.project_id,
-        )
+        logger.info("bigquery_test_connection_requested", project_id=self.project_id)
+
         try:
-            with self:
-                logger.info(
-                    "bigquery_test_connection_success",
-                    project_id=self.project_id,
-                )
-                return ConnectionTestResult(success=True, message="Successfully connected to Google BigQuery.")
+            self.connect()
+            # simple query
+            self._client.query("SELECT 1").result()
+
+            logger.info("bigquery_test_connection_success", project_id=self.project_id)
+            return ConnectionTestResult(True, "Connected to BigQuery")
+
         except Exception as e:
             logger.warning(
                 "bigquery_test_connection_failed",
@@ -105,7 +121,10 @@ class BigQuerySource(SourceConnector):
                 error=str(e),
                 exc_info=True,
             )
-            return ConnectionTestResult(success=False, message=f"Failed to connect to Google BigQuery: {e}")
+            return ConnectionTestResult(False, f"BigQuery test failed: {e}")
+
+        finally:
+            self.disconnect()
 
     # ===================================================================
     # Schema Discovery
@@ -118,141 +137,132 @@ class BigQuerySource(SourceConnector):
         )
 
         if not self.project_id or not self.dataset_id:
-            logger.error(
-                "bigquery_schema_discovery_invalid_config",
-                project_id=self.project_id,
-                dataset_id=self.dataset_id,
+            raise ValueError("Project ID and Dataset ID required")
+
+        self.connect()
+        tables: list[Table] = []
+
+        try:
+            dataset_ref = bigquery.DatasetReference(self.project_id, self.dataset_id)
+
+            for table_item in self._client.list_tables(dataset_ref):
+                table_id = table_item.table_id
+                fq_table = f"{self.project_id}.{self.dataset_id}.{table_id}"
+
+                logger.debug("bigquery_schema_table_processing", table=fq_table)
+
+                try:
+                    table_obj = self._client.get_table(fq_table)
+                except NotFound:
+                    logger.warning("bigquery_table_not_found", table=fq_table)
+                    continue
+
+                columns: list[Column] = []
+                for field in table_obj.schema:
+                    columns.append(
+                        Column(
+                            name=field.name,
+                            data_type=map_bigquery_type_to_data_type(field.field_type),
+                            nullable=field.is_nullable,
+                        )
+                    )
+
+                tables.append(
+                    Table(
+                        name=table_id,
+                        schema=self.dataset_id,
+                        columns=columns,
+                        row_count=table_obj.num_rows,
+                    )
+                )
+
+            logger.info(
+                "bigquery_schema_discovery_completed",
+                table_count=len(tables),
             )
-            raise ValueError("Project ID and Dataset ID must be provided in config to discover schema.")
 
-        with self:
-            tables = []
-            dataset_ref = self._client.dataset(self.dataset_id, project=self.project_id)
+            return Schema(tables=tables)
 
-            try:
-                for table_entry in self._client.list_tables(dataset_ref):
-                    table_id = table_entry.table_id
-                    table_full_id = f"{self.project_id}.{self.dataset_id}.{table_id}"
+        except Exception as e:
+            logger.error(
+                "bigquery_schema_discovery_failed",
+                error=str(e),
+                exc_info=True,
+            )
+            raise e
 
-                    logger.debug(
-                        "bigquery_schema_table_processing",
-                        table_id=table_id,
-                        table_full_id=table_full_id,
-                    )
-
-                    table = self._client.get_table(table_full_id)
-                    columns = []
-
-                    for field in table.schema:
-                        data_type = map_bigquery_type_to_data_type(field.field_type)
-
-                        columns.append(
-                            Column(
-                                name=field.name,
-                                data_type=data_type,
-                                nullable=field.is_nullable,
-                            )
-                        )
-
-                    tables.append(
-                        Table(
-                            name=table_id,
-                            schema=self.dataset_id,
-                            columns=columns,
-                            row_count=table.num_rows,
-                        )
-                    )
-
-                logger.info(
-                    "bigquery_schema_discovery_completed",
-                    table_count=len(tables),
-                )
-
-                return Schema(tables=tables)
-
-            except Exception as e:
-                logger.error(
-                    "bigquery_schema_discovery_failed",
-                    error=str(e),
-                    exc_info=True,
-                )
-                raise
+        finally:
+            self.disconnect()
 
     # ===================================================================
-    # Data Reading
+    # READ DATA
     # ===================================================================
     def read(
         self,
         stream: str,
-        state: dict | None = None,
-        query: str | None = None
+        state: Optional[State] = None,
+        query: Optional[str] = None,
     ) -> Iterator[Record]:
+
         logger.info(
             "bigquery_read_requested",
             project_id=self.project_id,
             dataset_id=self.dataset_id,
             stream=stream,
-            custom_query_provided=bool(query),
+            has_state=bool(state),
+            has_query=bool(query),
         )
 
         if not self.project_id or not self.dataset_id or not stream:
+            raise ValueError("Project, Dataset, and Table name required")
+
+        self.connect()
+
+        # CASE 1 — Custom SQL
+        if query:
+            sql = query
+        else:
+            sql = f"SELECT * FROM `{self.project_id}.{self.dataset_id}.{stream}`"
+
+        # Incremental Sync
+        if state and state.cursor_field:
+            cursor_field = state.cursor_field
+            cursor_value = state.cursor_value
+
+            logger.debug(
+                "bigquery_incremental_filter_applied",
+                cursor_field=cursor_field,
+                cursor_value=str(cursor_value),
+            )
+
+            if cursor_value is not None:
+                if "WHERE" in sql.upper():
+                    sql += f" AND {cursor_field} > '{cursor_value}'"
+                else:
+                    sql += f" WHERE {cursor_field} > '{cursor_value}'"
+
+        logger.info("bigquery_read_query_executing", query_preview=sql[:200])
+
+        try:
+            query_job = self._client.query(sql)
+
+            for row in query_job.result():
+                record = {col: row[col] for col in row.keys()}
+
+                logger.debug("bigquery_row_fetched", stream=stream)
+                yield Record(stream=stream, data=record)
+
+        except Exception as e:
             logger.error(
-                "bigquery_read_invalid_config",
-                project_id=self.project_id,
-                dataset_id=self.dataset_id,
-                stream=stream,
+                "bigquery_read_failed",
+                error=str(e),
+                query_preview=sql[:200],
+                exc_info=True,
             )
-            raise ValueError("Project ID, Dataset ID, and Table name (stream) must be provided.")
+            raise
 
-        with self:
-            if query:
-                final_query = query
-            else:
-                final_query = f"SELECT * FROM `{self.project_id}.{self.dataset_id}.{stream}`"
-
-            # Incremental sync
-            if state and self.config.get("replication_key"):
-                replication_key = self.config["replication_key"]
-                last_replicated_value = state.get("cursor_value")
-
-                logger.debug(
-                    "bigquery_read_incremental_applied",
-                    replication_key=replication_key,
-                    last_replicated_value=last_replicated_value,
-                )
-
-                if last_replicated_value:
-                    if "WHERE" in final_query.upper():
-                        final_query += f" AND {replication_key} > '{last_replicated_value}'"
-                    else:
-                        final_query += f" WHERE {replication_key} > '{last_replicated_value}'"
-
-            logger.info(
-                "bigquery_read_query_executing",
-                stream=stream,
-                query_preview=final_query[:250],
-            )
-
-            try:
-                query_job = self._client.query(final_query)
-                for row in query_job.result():
-                    data = {key: row[key] for key in row.keys()}
-
-                    logger.debug(
-                        "bigquery_read_row_fetched",
-                        stream=stream,
-                    )
-
-                    yield Record(stream=stream, data=data)
-
-            except Exception as e:
-                logger.error(
-                    "bigquery_read_failed",
-                    stream=stream,
-                    error=str(e),
-                    exc_info=True,
-                )
-                raise
+        finally:
+            self.disconnect()
 
     # ===================================================================
     # Record Count
@@ -260,39 +270,33 @@ class BigQuerySource(SourceConnector):
     def get_record_count(self, stream: str) -> int:
         logger.info(
             "bigquery_record_count_requested",
-            project_id=self.project_id,
-            dataset_id=self.dataset_id,
             stream=stream,
+            dataset_id=self.dataset_id,
         )
 
         if not self.project_id or not self.dataset_id or not stream:
-            logger.error(
-                "bigquery_record_count_invalid_config",
-                project_id=self.project_id,
-                dataset_id=self.dataset_id,
-                stream=stream,
+            raise ValueError("Project, Dataset, and Table name required")
+
+        self.connect()
+
+        try:
+            table_ref = f"{self.project_id}.{self.dataset_id}.{stream}"
+            table = self._client.get_table(table_ref)
+
+            logger.info(
+                "bigquery_record_count_retrieved",
+                row_count=table.num_rows,
             )
-            raise ValueError("Project ID, Dataset ID, and Table name (stream) must be provided.")
 
-        with self:
-            table_full_id = f"{self.project_id}.{self.dataset_id}.{stream}"
+            return table.num_rows
 
-            try:
-                table = self._client.get_table(table_full_id)
+        except Exception as e:
+            logger.error(
+                "bigquery_record_count_failed",
+                error=str(e),
+                exc_info=True,
+            )
+            raise
 
-                logger.info(
-                    "bigquery_record_count_retrieved",
-                    stream=stream,
-                    row_count=table.num_rows,
-                )
-
-                return table.num_rows
-
-            except Exception as e:
-                logger.error(
-                    "bigquery_record_count_failed",
-                    stream=stream,
-                    error=str(e),
-                    exc_info=True,
-                )
-                raise
+        finally:
+            self.disconnect()

@@ -1,32 +1,69 @@
-"""Connector Factory with Auto-Registration
-Import this module to register all available connectors
+"""
+Connector Factory (Final Clean Version)
+---------------------------------------
+
+Central registry for ALL connectors in the Universal ETL.
+
+Goals:
+✓ Cleanest possible structure
+✓ DRY registration patterns
+✓ Source + Destination symmetry
+✓ Proper config model validation
+✓ Auto-registration on import
+✓ Fully compatible with PipelineEngine + Celery Worker
+
+NOTE:
+The actual logic for instantiating connectors lives in:
+    app/connectors/base.py (class ConnectorFactory)
+This file ONLY registers names → classes → config models.
 """
 
-from app.connectors.base import ConnectorFactory
-from app.connectors.destinations.file.filesystem import FileSystemDestination
-from app.connectors.destinations.sql.mssql import MSSQLDestination
-from app.connectors.destinations.sql.mysql import MySQLDestination
-from app.connectors.destinations.sql.oracle import OracleDestination
-from app.connectors.destinations.sql.postgresql import PostgreSQLDestination
-from app.connectors.destinations.cloud.s3 import S3Destination
-from app.connectors.destinations.sql.sqlite import SQLiteDestination
-from app.connectors.destinations.nosql.mongodb import MongoDBDestination
-from app.connectors.destinations.cloud.snowflake import SnowflakeDestination
-from app.connectors.destinations.cloud.bigquery import BigQueryDestination
-from app.connectors.destinations.integration.singer import SingerDestination
+from __future__ import annotations
 
-from app.connectors.sources.file.filesystem import FileSystemSource
-from app.connectors.sources.sql.mssql import MSSQLSource
-from app.connectors.sources.sql.mysql import MySQLSource
-from app.connectors.sources.sql.oracle import OracleSource
+from app.core.logging import get_logger
+from app.connectors.base import ConnectorFactory
+
+# ---------------------------------------------------------
+# IMPORT SOURCE CONNECTOR CLASSES
+# ---------------------------------------------------------
 from app.connectors.sources.sql.postgresql import PostgreSQLSource
-from app.connectors.sources.cloud.s3 import S3Source
+from app.connectors.sources.sql.mysql import MySQLSource
+from app.connectors.sources.sql.mssql import MSSQLSource
+from app.connectors.sources.sql.oracle import OracleSource
 from app.connectors.sources.sql.sqlite import SQLiteSource
+
 from app.connectors.sources.nosql.mongodb import MongoDBSource
+
+from app.connectors.sources.cloud.s3 import S3Source
 from app.connectors.sources.cloud.snowflake import SnowflakeSource
 from app.connectors.sources.cloud.bigquery import BigQuerySource
+
+from app.connectors.sources.file.filesystem import FileSystemSource
+
 from app.connectors.sources.integration.singer import SingerSource
 
+# ---------------------------------------------------------
+# IMPORT DESTINATION CONNECTOR CLASSES
+# ---------------------------------------------------------
+from app.connectors.destinations.sql.postgresql import PostgreSQLDestination
+from app.connectors.destinations.sql.mysql import MySQLDestination
+from app.connectors.destinations.sql.mssql import MSSQLDestination
+from app.connectors.destinations.sql.oracle import OracleDestination
+from app.connectors.destinations.sql.sqlite import SQLiteDestination
+
+from app.connectors.destinations.nosql.mongodb import MongoDBDestination
+
+from app.connectors.destinations.cloud.s3 import S3Destination
+from app.connectors.destinations.cloud.snowflake import SnowflakeDestination
+from app.connectors.destinations.cloud.bigquery import BigQueryDestination
+
+from app.connectors.destinations.file.filesystem import FileSystemDestination
+
+from app.connectors.destinations.integration.singer import SingerDestination
+
+# ---------------------------------------------------------
+# IMPORT CONFIG SCHEMAS
+# ---------------------------------------------------------
 from app.schemas.connector_configs import (
     PostgresConfig,
     MySQLConfig,
@@ -42,55 +79,66 @@ from app.schemas.connector_configs import (
     SingerDestinationConfig,
 )
 
+logger = get_logger(__name__)
 
-def register_all_connectors():
-    """Register all available connectors
-    Called on app startup
+
+# ===================================================================
+# HELPER — reduces duplicate boilerplate
+# ===================================================================
+def _register_pair(name: str, source_cls, dest_cls, config_model):
     """
-    # PostgreSQL
-    ConnectorFactory.register_source("postgresql", PostgreSQLSource, PostgresConfig)
-    ConnectorFactory.register_destination("postgresql", PostgreSQLDestination, PostgresConfig)
+    Register BOTH source & destination with one call.
+    Example:
+        _register_pair("postgresql", PostgreSQLSource, PostgreSQLDestination, PostgresConfig)
+    """
+    ConnectorFactory.register_source(name, source_cls, config_model)
+    ConnectorFactory.register_destination(name, dest_cls, config_model)
 
-    # SQLite
-    ConnectorFactory.register_source("sqlite", SQLiteSource, SQLiteConfig)
-    ConnectorFactory.register_destination("sqlite", SQLiteDestination, SQLiteConfig)
 
-    # File System
-    ConnectorFactory.register_source("local_file", FileSystemSource, FileSystemConfig)
-    ConnectorFactory.register_destination("local_file", FileSystemDestination, FileSystemConfig)
+# ===================================================================
+# MASTER REGISTRATION FUNCTION
+# ===================================================================
+def register_all_connectors() -> None:
+    """
+    Registers all connectors consistently.
+    Auto-executed once at module import.
+    """
+    logger.info("connector_registration_started")
 
-    # AWS S3
-    ConnectorFactory.register_source("s3", S3Source, S3Config)
-    ConnectorFactory.register_destination("s3", S3Destination, S3Config)
+    # Clean & flat list of all connector mappings
+    registry: list[tuple] = [
+        ("postgresql", PostgreSQLSource, PostgreSQLDestination, PostgresConfig),
+        ("mysql", MySQLSource, MySQLDestination, MySQLConfig),
+        ("mssql", MSSQLSource, MSSQLDestination, MSSQLConfig),
+        ("oracle", OracleSource, OracleDestination, OracleConfig),
+        ("sqlite", SQLiteSource, SQLiteDestination, SQLiteConfig),
 
-    # Oracle
-    ConnectorFactory.register_source("oracle", OracleSource, OracleConfig)
-    ConnectorFactory.register_destination("oracle", OracleDestination, OracleConfig)
+        ("mongodb", MongoDBSource, MongoDBDestination, MongoDBConfig),
 
-    # MySQL
-    ConnectorFactory.register_source("mysql", MySQLSource, MySQLConfig)
-    ConnectorFactory.register_destination("mysql", MySQLDestination, MySQLConfig)
+        ("s3", S3Source, S3Destination, S3Config),
+        ("snowflake", SnowflakeSource, SnowflakeDestination, SnowflakeConfig),
+        ("bigquery", BigQuerySource, BigQueryDestination, BigQueryConfig),
 
-    # MSSQL
-    ConnectorFactory.register_source("mssql", MSSQLSource, MSSQLConfig)
-    ConnectorFactory.register_destination("mssql", MSSQLDestination, MSSQLConfig)
+        ("local_file", FileSystemSource, FileSystemDestination, FileSystemConfig),
+    ]
 
-    # MongoDB
-    ConnectorFactory.register_source("mongodb", MongoDBSource, MongoDBConfig)
-    ConnectorFactory.register_destination("mongodb", MongoDBDestination, MongoDBConfig)
+    # Register all “normal” connectors
+    for name, src_cls, dst_cls, cfg_model in registry:
+        _register_pair(name, src_cls, dst_cls, cfg_model)
+        logger.debug("connector_registered", name=name)
 
-    # Snowflake
-    ConnectorFactory.register_source("snowflake", SnowflakeSource, SnowflakeConfig)
-    ConnectorFactory.register_destination("snowflake", SnowflakeDestination, SnowflakeConfig)
-
-    # BigQuery
-    ConnectorFactory.register_source("bigquery", BigQuerySource, BigQueryConfig)
-    ConnectorFactory.register_destination("bigquery", BigQueryDestination, BigQueryConfig)
-
-    # Singer.io
+    # Singer connectors require different config models
     ConnectorFactory.register_source("singer", SingerSource, SingerSourceConfig)
     ConnectorFactory.register_destination("singer", SingerDestination, SingerDestinationConfig)
+    logger.debug("connector_registered", name="singer")
+
+    # Summary log
+    logger.info(
+        "connector_registration_completed",
+        sources=len(ConnectorFactory._sources),
+        destinations=len(ConnectorFactory._destinations),
+    )
 
 
-# Auto-register on import
+# Auto-execute registration on import
 register_all_connectors()

@@ -1,289 +1,237 @@
-"""File System Destination Connector (with Structured Logging)"""
+"""
+File System Destination Connector — Universal ETL Compatible
+------------------------------------------------------------
+Supports:
+✓ JSON
+✓ JSONL
+✓ CSV
+✓ Parquet
+✓ Avro
+✓ Multi-stream writing
+✓ Batching for large datasets
+"""
+
+from __future__ import annotations
 
 import csv
 import json
+import uuid
 from datetime import datetime, timezone
-import os
 from pathlib import Path
-from typing import Any
-from collections.abc import Iterator
+from typing import Any, Iterator, Optional
 
-import avro.datafile
-import avro.io
-import avro.schema
 import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
+import avro.schema
+import avro.datafile
+import avro.io
 
-from app.connectors.base import Column, ConnectionTestResult, DataType, DestinationConnector, Record
+from app.connectors.base import (
+    DestinationConnector,
+    ConnectionTestResult,
+    Record,
+    Column,
+)
 from app.core.logging import get_logger
 from app.schemas.connector_configs import FileSystemConfig
+from app.connectors.base import DataType
 
 logger = get_logger(__name__)
 
 
 class FileSystemDestination(DestinationConnector):
-    """File System destination connector
-    Supports Parquet, JSON, CSV, JSONL, Avro formats
-    """
 
-    SUPPORTED_FORMATS = ["parquet", "json", "csv", "jsonl", "avro"]
-
-    AVRO_TYPE_MAPPING = {
-        DataType.INTEGER: "long",
-        DataType.FLOAT: "double",
-        DataType.STRING: "string",
-        DataType.BOOLEAN: "boolean",
-        DataType.DATE: "string",
-        DataType.DATETIME: "string",
-        DataType.JSON: "string",
-        DataType.BINARY: "bytes",
-        DataType.NULL: ["null", "string"],
-    }
+    SUPPORTED_FORMATS = {"json", "jsonl", "csv", "parquet", "avro"}
 
     def __init__(self, config: FileSystemConfig):
         super().__init__(config)
+
         self.base_path = Path(config.file_path)
         self.format = config.format.lower()
-        
-        # Extra fields
+        self.overwrite = getattr(config, "overwrite", False)
         self.partition_by = getattr(config, "partition_by", None)
         self.compression = getattr(config, "compression", "snappy")
-        self.overwrite = getattr(config, "overwrite", False)
-
-        logger.debug(
-            "fs_destination_initialized",
-            base_path=str(self.base_path),
-            format=self.format,
-            compression=self.compression,
-            overwrite=self.overwrite,
-            partition_by=self.partition_by,
-        )
+        self.batch_size = config.batch_size
 
         if self.format not in self.SUPPORTED_FORMATS:
-            raise ValueError(f"Unsupported format: {self.format}")
+            raise ValueError(f"Unsupported filesystem format: {self.format}")
 
         self.base_path.mkdir(parents=True, exist_ok=True)
+
+        logger.debug(
+            "filesystem_destination_initialized",
+            base_path=str(self.base_path),
+            format=self.format,
+            partition_by=self.partition_by,
+            overwrite=self.overwrite,
+            compression=self.compression,
+        )
+
+    # ------------------------------------------------------------------
+    # Universal Connector API
+    # ------------------------------------------------------------------
+    def supports_streams(self) -> bool:
+        return True
+
+    def supports_query(self) -> bool:
+        return False
+
+    def get_stream_identifier(self, config: dict) -> str:
+        return config.get("stream") or "filesystem"
 
     # ------------------------------------------------------------------
     # Test Connection
     # ------------------------------------------------------------------
     def test_connection(self) -> ConnectionTestResult:
-        logger.info(
-            "fs_test_connection_started",
-            base_path=str(self.base_path)
-        )
         try:
             if not self.base_path.exists():
-                return ConnectionTestResult(
-                    success=False,
-                    message=f"Base path does not exist: {self.base_path}"
-                )
+                return ConnectionTestResult(False, f"Path does not exist: {self.base_path}")
 
-            if not os.access(self.base_path, os.W_OK):
-                return ConnectionTestResult(
-                    success=False,
-                    message=f"No write permission: {self.base_path}"
-                )
+            if not self.base_path.is_dir():
+                return ConnectionTestResult(False, f"Not a directory: {self.base_path}")
 
-            test_file = self.base_path / ".test_write"
-            try:
-                test_file.write_text("test")
-                test_file.unlink()
-            except Exception as e:
-                logger.error(
-                    "fs_test_write_failed",
-                    error=str(e),
-                    exc_info=True
-                )
-                return ConnectionTestResult(
-                    success=False,
-                    message=f"Cannot write to directory: {e}"
-                )
+            test_file = self.base_path / ".fs_test"
+            test_file.write_text("ok")
+            test_file.unlink()
 
-            logger.info("fs_test_connection_success", base_path=str(self.base_path))
-
-            return ConnectionTestResult(
-                success=True,
-                message="File system write access confirmed",
-                metadata={
-                    "base_path": str(self.base_path),
-                    "format": self.format,
-                    "compression": self.compression,
-                },
-            )
+            return ConnectionTestResult(True, "Write access OK")
 
         except Exception as e:
-            logger.error("fs_test_connection_failed", error=str(e), exc_info=True)
-            return ConnectionTestResult(success=False, message=str(e))
+            return ConnectionTestResult(False, str(e))
 
     # ------------------------------------------------------------------
-    # Create Stream
+    # Create Stream (Directory)
     # ------------------------------------------------------------------
     def create_stream(self, stream: str, schema: list[Column]) -> None:
-        stream_path = self.base_path / stream
-        stream_path.mkdir(parents=True, exist_ok=True)
-
-        logger.info(
-            "fs_stream_created",
-            stream=stream,
-            path=str(stream_path)
-        )
-
-    # ------------------------------------------------------------------
-    # Write
-    # ------------------------------------------------------------------
-    def write(self, records: Iterator[Record]) -> int:
-        logger.info("fs_write_started")
-
-        total_written = 0
-        grouped: dict[str, list[dict[str, Any]]] = {}
-
-        for record in records:
-            grouped.setdefault(record.stream, []).append(record.data)
-
-        for stream, data in grouped.items():
-            if not data:
-                continue
-
-            count = self._write_stream(stream, data)
-            total_written += count
-
-            logger.info(
-                "fs_stream_write_completed",
-                stream=stream,
-                count=count
-            )
-
-        logger.info("fs_write_completed", total_written=total_written)
-        return total_written
-
-    # ------------------------------------------------------------------
-    # Write Stream
-    # ------------------------------------------------------------------
-    def _write_stream(self, stream: str, data: list[dict[str, Any]]) -> int:
         stream_dir = self.base_path / stream
         stream_dir.mkdir(parents=True, exist_ok=True)
 
+        logger.info("filesystem_stream_prepared", path=str(stream_dir), stream=stream)
+
+    # ------------------------------------------------------------------
+    # Main Write Entry
+    # ------------------------------------------------------------------
+    def write(self, records: Iterator[Record]) -> int:
+        """
+        Group by stream and write file per batch.
+        Avoid loading all rows into memory.
+        """
+        buffer: dict[str, list[dict]] = {}
+        total_written = 0
+
+        for rec in records:
+            buffer.setdefault(rec.stream, []).append(rec.data)
+
+            if len(buffer[rec.stream]) >= self.batch_size:
+                total_written += self._flush_stream(rec.stream, buffer[rec.stream])
+                buffer[rec.stream] = []
+
+        # final flush
+        for stream, rows in buffer.items():
+            if rows:
+                total_written += self._flush_stream(stream, rows)
+
+        logger.info("filesystem_write_completed", total_written=total_written)
+        return total_written
+
+    # ------------------------------------------------------------------
+    # Flush One Stream
+    # ------------------------------------------------------------------
+    def _flush_stream(self, stream: str, rows: list[dict]) -> int:
+        if not rows:
+            return 0
+
+        stream_dir = (self.base_path / stream).resolve()
+        stream_dir.mkdir(parents=True, exist_ok=True)
+
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-        ext = self._get_file_extension()
-        file_path = stream_dir / f"{stream}_{timestamp}.{ext}"
+        unique = uuid.uuid4().hex[:8]
+        ext = self._ext()
+        filename = f"{stream}_{timestamp}_{unique}.{ext}"
 
-        if file_path.exists() and not self.overwrite:
-            counter = 1
-            while file_path.exists():
-                file_path = stream_dir / f"{stream}_{timestamp}_{counter}.{ext}"
-                counter += 1
+        file_path = stream_dir / filename
 
-        logger.debug(
-            "fs_stream_writing",
-            path=str(file_path),
-            stream=stream,
-            records=len(data),
-            format=self.format
-        )
+        logger.debug("filesystem_writing_file", stream=stream, file=str(file_path), count=len(rows))
 
-        try:
-            if self.format == "parquet":
-                return self._write_parquet(file_path, data)
-            elif self.format == "json":
-                return self._write_json(file_path, data)
-            elif self.format == "jsonl":
-                return self._write_jsonl(file_path, data)
-            elif self.format == "csv":
-                return self._write_csv(file_path, data)
-            elif self.format == "avro":
-                return self._write_avro(file_path, data)
-        except Exception as e:
-            logger.error(
-                "fs_stream_write_failed",
-                stream=stream,
-                error=str(e),
-                exc_info=True
-            )
-            raise
+        if self.format == "json":
+            return self._write_json(file_path, rows)
+        if self.format == "jsonl":
+            return self._write_jsonl(file_path, rows)
+        if self.format == "csv":
+            return self._write_csv(file_path, rows)
+        if self.format == "parquet":
+            return self._write_parquet(file_path, rows)
+        if self.format == "avro":
+            return self._write_avro(file_path, rows)
 
         raise ValueError(f"Unsupported format: {self.format}")
 
     # ------------------------------------------------------------------
-    # Format Handlers
+    # Format Writers
     # ------------------------------------------------------------------
-    def _get_file_extension(self) -> str:
+    def _ext(self) -> str:
         return {
-            "parquet": "parquet",
             "json": "json",
             "jsonl": "jsonl",
             "csv": "csv",
+            "parquet": "parquet",
             "avro": "avro",
-        }.get(self.format, "dat")
+        }[self.format]
 
-    def _write_parquet(self, file_path: Path, data: list[dict[str, Any]]) -> int:
-        df = pd.DataFrame(data)
-        table = pa.Table.from_pandas(df)
-        pq.write_table(table, file_path, compression=None if self.compression == "none" else self.compression)
+    def _write_json(self, path: Path, rows: list[dict]) -> int:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(rows, f, indent=2, default=str)
+        return len(rows)
 
-        logger.info("fs_parquet_written", path=str(file_path), records=len(data))
-        return len(data)
+    def _write_jsonl(self, path: Path, rows: list[dict]) -> int:
+        with open(path, "w", encoding="utf-8") as f:
+            for row in rows:
+                f.write(json.dumps(row, default=str) + "\n")
+        return len(rows)
 
-    def _write_json(self, file_path: Path, data: list[dict[str, Any]]) -> int:
-        with open(file_path, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, default=str)
-
-        logger.info("fs_json_written", path=str(file_path), records=len(data))
-        return len(data)
-
-    def _write_jsonl(self, file_path: Path, data: list[dict[str, Any]]) -> int:
-        with open(file_path, "w", encoding="utf-8") as f:
-            for row in data:
-                json.dump(row, f, default=str)
-                f.write("\n")
-
-        logger.info("fs_jsonl_written", path=str(file_path), records=len(data))
-        return len(data)
-
-    def _write_csv(self, file_path: Path, data: list[dict[str, Any]]) -> int:
-        if not data:
-            return 0
-
-        fieldnames = sorted({key for row in data for key in row.keys()})
-
-        with open(file_path, "w", encoding="utf-8", newline="") as f:
+    def _write_csv(self, path: Path, rows: list[dict]) -> int:
+        fieldnames = sorted({key for row in rows for key in row})
+        with open(path, "w", newline="", encoding="utf-8") as f:
             writer = csv.DictWriter(f, fieldnames=fieldnames)
             writer.writeheader()
-            writer.writerows(data)
+            writer.writerows(rows)
+        return len(rows)
 
-        logger.info("fs_csv_written", path=str(file_path), records=len(data))
-        return len(data)
+    def _write_parquet(self, path: Path, rows: list[dict]) -> int:
+        df = pd.DataFrame(rows)
+        table = pa.Table.from_pandas(df)
+        pq.write_table(
+            table,
+            path,
+            compression=None if self.compression == "none" else self.compression,
+        )
+        return len(rows)
 
-    def _write_avro(self, file_path: Path, data: list[dict[str, Any]]) -> int:
-        if not data:
-            return 0
+    # ------------------------------------------------------------------
+    # Avro Writer
+    # ------------------------------------------------------------------
+    def _write_avro(self, path: Path, rows: list[dict]) -> int:
+        schema = self._generate_avro_schema(rows[0])
+        schema_obj = avro.schema.parse(json.dumps(schema))
 
-        avro_schema = self._infer_avro_schema(data[0])
-        schema_obj = avro.schema.parse(json.dumps(avro_schema))
-
-        with open(file_path, "wb") as f:
+        with open(path, "wb") as f:
             writer = avro.datafile.DataFileWriter(f, avro.io.DatumWriter(), schema_obj)
-            for row in data:
-                writer.append(self._convert_to_avro(row))
+            for row in rows:
+                writer.append(self._prepare_avro_row(row))
             writer.close()
 
-        logger.info("fs_avro_written", path=str(file_path), records=len(data))
-        return len(data)
+        return len(rows)
 
-    # ------------------------------------------------------------------
-    # Avro Helpers
-    # ------------------------------------------------------------------
-    def _infer_avro_schema(self, sample: dict[str, Any]) -> dict[str, Any]:
+    def _generate_avro_schema(self, sample: dict[str, Any]) -> dict:
         fields = []
-        for key, value in sample.items():
-            avro_type = self._python_to_avro_type(value)
-            fields.append({"name": key, "type": ["null", avro_type] if value is None else avro_type})
+        for key, val in sample.items():
+            fields.append({"name": key, "type": self._infer_avro_type(val)})
         return {"type": "record", "name": "Record", "fields": fields}
 
-    def _python_to_avro_type(self, value: Any) -> str:
+    def _infer_avro_type(self, value: Any) -> Any:
         if value is None:
-            return "null"
+            return ["null", "string"]
         if isinstance(value, bool):
             return "boolean"
         if isinstance(value, int):
@@ -292,21 +240,19 @@ class FileSystemDestination(DestinationConnector):
             return "double"
         if isinstance(value, (str, datetime)):
             return "string"
+        if isinstance(value, (list, dict)):
+            return "string"
         if isinstance(value, bytes):
             return "bytes"
-        if isinstance(value, (dict, list)):
-            return "string"
         return "string"
 
-    def _convert_to_avro(self, record: dict[str, Any]) -> dict[str, Any]:
-        converted = {}
-        for key, value in record.items():
-            if value is None:
-                converted[key] = None
-            elif isinstance(value, datetime):
-                converted[key] = value.isoformat()
-            elif isinstance(value, (list, dict)):
-                converted[key] = json.dumps(value, default=str)
+    def _prepare_avro_row(self, row: dict[str, Any]) -> dict[str, Any]:
+        out = {}
+        for k, v in row.items():
+            if isinstance(v, datetime):
+                out[k] = v.isoformat()
+            elif isinstance(v, (list, dict)):
+                out[k] = json.dumps(v)
             else:
-                converted[key] = value
-        return converted
+                out[k] = v
+        return out

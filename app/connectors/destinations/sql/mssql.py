@@ -1,11 +1,21 @@
-"""MSSQL Destination Connector (Structured Logging)"""
+"""
+MSSQL Destination Connector — Unified ETL Framework Edition
+Fully aligned with PostgreSQL / Oracle / MySQL / SQLite destination connectors.
+"""
 
+from __future__ import annotations
 from collections.abc import Iterator
-from typing import Any
+from typing import Any, List
 
 import pymssql
 
-from app.connectors.base import Column, ConnectionTestResult, DestinationConnector, Record
+from app.connectors.base import (
+    Column,
+    ConnectionTestResult,
+    DestinationConnector,
+    Record,
+    DataType,
+)
 from app.core.logging import get_logger
 from app.schemas.connector_configs import MSSQLConfig
 
@@ -13,52 +23,53 @@ logger = get_logger(__name__)
 
 
 class MSSQLDestination(DestinationConnector):
-    """MSSQL destination connector"""
+    """Microsoft SQL Server destination connector."""
 
     TYPE_MAPPING = {
-        "INTEGER": "BIGINT",
-        "FLOAT": "FLOAT",
-        "STRING": "NVARCHAR(MAX)",
-        "BOOLEAN": "BIT",
-        "DATE": "DATE",
-        "DATETIME": "DATETIME2",
-        "JSON": "NVARCHAR(MAX)",
-        "BINARY": "VARBINARY(MAX)",
-        "NULL": "NVARCHAR(MAX)",
+        DataType.INTEGER: "BIGINT",
+        DataType.FLOAT: "FLOAT",
+        DataType.STRING: "NVARCHAR(MAX)",
+        DataType.BOOLEAN: "BIT",
+        DataType.DATE: "DATE",
+        DataType.DATETIME: "DATETIME2",
+        DataType.JSON: "NVARCHAR(MAX)",
+        DataType.BINARY: "VARBINARY(MAX)",
+        DataType.NULL: "NVARCHAR(MAX)",
     }
 
     def __init__(self, config: MSSQLConfig):
         super().__init__(config)
+
         self.host = config.host
         self.port = config.port
         self.user = config.user
         self.password = config.password.get_secret_value()
         self.database = config.database
         self._batch_size = config.batch_size
+
         self._connection = None
+        self.write_mode = getattr(config, "write_mode", "insert")
 
         logger.debug(
             "mssql_destination_initialized",
             host=self.host,
             port=self.port,
             database=self.database,
+            write_mode=self.write_mode,
             batch_size=self._batch_size,
         )
 
-    # ------------------------------------------------------------------
-    # Connection Handling
-    # ------------------------------------------------------------------
+    # =========================================================================
+    # Connection
+    # =========================================================================
     def connect(self) -> None:
-        """Establish MSSQL connection."""
-        if self._connection is not None:
+        if self._connection:
             return
 
         server = f"{self.host}:{self.port}" if self.port else self.host
 
         logger.info(
             "mssql_destination_connecting",
-            host=self.host,
-            port=self.port,
             server=server,
             database=self.database,
         )
@@ -70,87 +81,87 @@ class MSSQLDestination(DestinationConnector):
                 password=self.password,
                 database=self.database,
                 autocommit=False,
+                as_dict=False,  # better for performance + consistent with other connectors
             )
 
             logger.info("mssql_destination_connected", server=server)
 
         except Exception as e:
             logger.error(
-                "mssql_destination_connection_failed",
+                "mssql_destination_connect_failed",
+                server=server,
                 error=str(e),
                 exc_info=True,
             )
             raise
 
     def disconnect(self) -> None:
-        """Close connection."""
-        if self._connection:
-            try:
-                self._connection.commit()
-                logger.debug("mssql_destination_commit_success")
-            except Exception as e:
-                logger.warning("mssql_destination_commit_failed", error=str(e), exc_info=True)
-
-            try:
-                self._connection.close()
-                logger.info("mssql_destination_disconnected")
-            except Exception as e:
-                logger.warning("mssql_destination_disconnect_failed", error=str(e), exc_info=True)
-
-            finally:
-                self._connection = None
-
-    # ------------------------------------------------------------------
-    # Test Connection
-    # ------------------------------------------------------------------
-    def test_connection(self) -> ConnectionTestResult:
-        logger.info("mssql_destination_test_connection_started")
+        if not self._connection:
+            return
 
         try:
-            self.connect()
-            cursor = self._connection.cursor()
-            cursor.execute("SELECT @@VERSION")
-            version = cursor.fetchone()[0]
-
-            logger.info("mssql_destination_test_connection_success", version=version)
-
-            return ConnectionTestResult(
-                success=True,
-                message="Connected",
-                metadata={"version": version},
-            )
+            self._connection.commit()
+            logger.debug("mssql_destination_commit_success")
         except Exception as e:
-            logger.error(
-                "mssql_destination_test_connection_failed",
+            logger.warning(
+                "mssql_destination_commit_failed",
                 error=str(e),
                 exc_info=True,
             )
-            return ConnectionTestResult(success=False, message=str(e))
+
+        try:
+            self._connection.close()
+            logger.info("mssql_destination_disconnected")
+        except Exception as e:
+            logger.warning(
+                "mssql_destination_disconnect_failed",
+                error=str(e),
+                exc_info=True,
+            )
+
+        finally:
+            self._connection = None
+
+    # =========================================================================
+    # Test Connection
+    # =========================================================================
+    def test_connection(self) -> ConnectionTestResult:
+        logger.info("mssql_destination_test_requested")
+
+        try:
+            self.connect()
+            cur = self._connection.cursor()
+            cur.execute("SELECT @@VERSION")
+            version = cur.fetchone()[0]
+            cur.close()
+
+            logger.info("mssql_destination_test_success", version=version)
+
+            return ConnectionTestResult(True, "Connected", {"version": version})
+
+        except Exception as e:
+            logger.error(
+                "mssql_destination_test_failed",
+                error=str(e),
+                exc_info=True,
+            )
+            return ConnectionTestResult(False, str(e))
+
         finally:
             self.disconnect()
 
-    # ------------------------------------------------------------------
-    # Stream/Table Creation
-    # ------------------------------------------------------------------
-    def create_stream(self, stream: str, schema: list[Column]) -> None:
-        """Create table if not exists."""
-        logger.info("mssql_destination_create_stream_started", stream=stream)
-
+    # =========================================================================
+    # Create Stream / Table
+    # =========================================================================
+    def create_stream(self, stream: str, schema: List[Column]) -> None:
         self.connect()
-        cursor = self._connection.cursor()
+
+        logger.info("mssql_destination_create_stream", stream=stream)
 
         try:
-            col_defs = []
-            for col in schema:
-                ms_type = self.TYPE_MAPPING.get(col.data_type.name, "NVARCHAR(MAX)")
-                nullable = "" if not col.nullable else "NULL"
-                col_defs.append(f"[{col.name}] {ms_type} {nullable}")
+            cur = self._connection.cursor()
 
-            pks = [f"[{c.name}]" for c in schema if c.primary_key]
-            if pks:
-                col_defs.append(f"PRIMARY KEY ({', '.join(pks)})")
-
-            # Split stream into schema + table
+            # Parse schema.table
             if "." in stream:
                 schema_name, table_name = stream.split(".", 1)
             else:
@@ -158,20 +169,34 @@ class MSSQLDestination(DestinationConnector):
 
             full_name = f"[{schema_name}].[{table_name}]"
 
+            col_defs = []
+            for col in schema:
+                sql_type = self.TYPE_MAPPING.get(col.data_type, "NVARCHAR(MAX)")
+                nullable = "NULL" if col.nullable else "NOT NULL"
+                col_defs.append(f"[{col.name}] {sql_type} {nullable}")
+
+            pk_cols = [f"[{c.name}]" for c in schema if c.primary_key]
+            if pk_cols:
+                col_defs.append(f"PRIMARY KEY ({', '.join(pk_cols)})")
+
+            sql = f"""
+            IF NOT EXISTS (
+                SELECT 1
+                FROM INFORMATION_SCHEMA.TABLES
+                WHERE TABLE_SCHEMA = '{schema_name}'
+                  AND TABLE_NAME = '{table_name}'
+            )
+            CREATE TABLE {full_name} (
+                {", ".join(col_defs)}
+            )
+            """
+
             logger.debug(
-                "mssql_destination_create_table_sql_prepared",
-                full_table_name=full_name,
-                columns=len(col_defs),
+                "mssql_destination_create_sql",
+                sql_preview=sql[:250],
             )
 
-            cursor.execute(f"""
-                IF NOT EXISTS (
-                    SELECT * FROM INFORMATION_SCHEMA.TABLES
-                    WHERE TABLE_SCHEMA = '{schema_name}' AND TABLE_NAME = '{table_name}'
-                )
-                CREATE TABLE {full_name} ({", ".join(col_defs)})
-            """)
-
+            cur.execute(sql)
             self._connection.commit()
 
             logger.info("mssql_destination_table_created", table=full_name)
@@ -179,9 +204,9 @@ class MSSQLDestination(DestinationConnector):
         except Exception as e:
             self._connection.rollback()
             logger.error(
-                "mssql_destination_table_creation_failed",
+                "mssql_destination_create_stream_failed",
+                stream=stream,
                 error=str(e),
-                table=stream,
                 exc_info=True,
             )
             raise
@@ -189,40 +214,48 @@ class MSSQLDestination(DestinationConnector):
         finally:
             self.disconnect()
 
-    # ------------------------------------------------------------------
-    # Write
-    # ------------------------------------------------------------------
+    # =========================================================================
+    # Write Records
+    # =========================================================================
     def write(self, records: Iterator[Record]) -> int:
-        """Write records in batches."""
-        logger.info("mssql_destination_write_started", batch_size=self._batch_size)
+        logger.info(
+            "mssql_destination_write_started",
+            batch_size=self._batch_size,
+            write_mode=self.write_mode,
+        )
 
         self.connect()
-        cursor = self._connection.cursor()
+        cur = self._connection.cursor()
 
-        total = 0
+        total_written = 0
         buffer = []
         current_stream = None
 
         try:
-            for record in records:
-                if current_stream and current_stream != record.stream:
-                    total += self._flush(cursor, current_stream, buffer)
+            for rec in records:
+                if current_stream and rec.stream != current_stream:
+                    total_written += self._flush(cur, current_stream, buffer)
                     buffer = []
 
-                current_stream = record.stream
-                buffer.append(record.data)
+                current_stream = rec.stream
+                buffer.append(rec.data)
 
                 if len(buffer) >= self._batch_size:
-                    total += self._flush(cursor, current_stream, buffer)
+                    total_written += self._flush(cur, current_stream, buffer)
                     buffer = []
 
+            # Final flush
             if buffer:
-                total += self._flush(cursor, current_stream, buffer)
+                total_written += self._flush(cur, current_stream, buffer)
 
             self._connection.commit()
 
-            logger.info("mssql_destination_write_completed", records_written=total)
-            return total
+            logger.info(
+                "mssql_destination_write_success",
+                total_records=total_written,
+            )
+
+            return total_written
 
         except Exception as e:
             self._connection.rollback()
@@ -236,34 +269,36 @@ class MSSQLDestination(DestinationConnector):
         finally:
             self.disconnect()
 
-    # ------------------------------------------------------------------
-    # Internal Batch Writer
-    # ------------------------------------------------------------------
-    def _flush(self, cursor, stream: str, data: list[dict[str, Any]]) -> int:
-        """Insert batch into MSSQL."""
-        if not data:
+    # =========================================================================
+    # Batch Insert
+    # =========================================================================
+    def _flush(self, cur, stream: str, batch: List[dict[str, Any]]) -> int:
+        if not batch:
             return 0
 
         try:
-            keys = list(data[0].keys())
+            keys = list(batch[0].keys())
 
-            # Table name handling
+            # Parse schema.table
             if "." in stream:
                 schema_name, table_name = stream.split(".", 1)
                 full_name = f"[{schema_name}].[{table_name}]"
             else:
                 full_name = f"[dbo].[{stream}]"
 
-            cols = ", ".join([f"[{k}]" for k in keys])
+            columns = ", ".join([f"[{k}]" for k in keys])
             placeholders = ", ".join(["%s"] * len(keys))
-            sql = f"INSERT INTO {full_name} ({cols}) VALUES ({placeholders})"
+            sql = f"INSERT INTO {full_name} ({columns}) VALUES ({placeholders})"
 
-            values = [tuple(item.get(k) for k in keys) for item in data]
+            values = [
+                tuple(row.get(k) for k in keys)
+                for row in batch
+            ]
 
-            cursor.executemany(sql, values)
+            cur.executemany(sql, values)
 
             logger.debug(
-                "mssql_destination_write_batch_success",
+                "mssql_destination_batch_success",
                 table=full_name,
                 records=len(values),
             )
@@ -272,7 +307,7 @@ class MSSQLDestination(DestinationConnector):
 
         except Exception as e:
             logger.error(
-                "mssql_destination_write_batch_failed",
+                "mssql_destination_batch_failed",
                 table=stream,
                 error=str(e),
                 exc_info=True,

@@ -1,6 +1,14 @@
-"""MySQL Source Connector
+"""
+MySQL Source Connector — Universal ETL Compatible
+-------------------------------------------------
+✓ Optional stream (table) — or custom SQL query
+✓ Incremental sync (state.cursor_field)
+✓ Streaming fetch with cursor arraysize
+✓ Structured logging everywhere
+✓ Schema discovery using INFORMATION_SCHEMA
 """
 
+from __future__ import annotations
 from collections.abc import Iterator
 from typing import Any
 
@@ -8,8 +16,14 @@ import pymysql
 import pymysql.cursors
 
 from app.connectors.base import (
-    Column, ConnectionTestResult, DataType, Record,
-    Schema, SourceConnector, State, Table
+    Column,
+    ConnectionTestResult,
+    DataType,
+    Record,
+    Schema,
+    SourceConnector,
+    State,
+    Table,
 )
 from app.core.logging import get_logger
 from app.schemas.connector_configs import MySQLConfig
@@ -18,7 +32,7 @@ logger = get_logger(__name__)
 
 
 class MySQLSource(SourceConnector):
-    """MySQL source connector"""
+    """Universal ETL MySQL Source Connector"""
 
     TYPE_MAPPING = {
         "int": DataType.INTEGER,
@@ -42,6 +56,21 @@ class MySQLSource(SourceConnector):
         "blob": DataType.BINARY,
     }
 
+    # ------------------------------------------------------------------
+    # Universal Metadata
+    # ------------------------------------------------------------------
+    def supports_streams(self) -> bool:
+        return True
+
+    def supports_query(self) -> bool:
+        return True
+
+    def get_stream_identifier(self, config: dict) -> str:
+        return config.get("stream") or config.get("table")
+
+    # ------------------------------------------------------------------
+    # Init
+    # ------------------------------------------------------------------
     def __init__(self, config: MySQLConfig):
         super().__init__(config)
 
@@ -50,7 +79,7 @@ class MySQLSource(SourceConnector):
         self.user = config.user
         self.password = config.password.get_secret_value()
         self.database = config.database
-        self._batch_size = config.batch_size
+        self.batch_size = config.batch_size
 
         self._connection = None
 
@@ -59,22 +88,17 @@ class MySQLSource(SourceConnector):
             host=self.host,
             port=self.port,
             database=self.database,
-            batch_size=self._batch_size,
+            batch_size=self.batch_size,
         )
 
-    # ===================================================================
-    # Connection Handling
-    # ===================================================================
+    # ------------------------------------------------------------------
+    # Connection
+    # ------------------------------------------------------------------
     def connect(self) -> None:
-        if self._connection is not None:
+        if self._connection:
             return
 
-        logger.info(
-            "mysql_connect_requested",
-            host=self.host,
-            port=self.port,
-            database=self.database,
-        )
+        logger.info("mysql_connecting", host=self.host, database=self.database)
 
         try:
             self._connection = pymysql.connect(
@@ -84,150 +108,128 @@ class MySQLSource(SourceConnector):
                 password=self.password,
                 database=self.database,
                 cursorclass=pymysql.cursors.DictCursor,
+                autocommit=False,
             )
-
-            logger.info(
-                "mysql_connect_success",
-                host=self.host,
-                database=self.database,
-            )
-
+            logger.info("mysql_connected", database=self.database)
         except Exception as e:
-            logger.error(
-                "mysql_connect_failed",
-                host=self.host,
-                database=self.database,
-                error=str(e),
-                exc_info=True,
-            )
+            logger.error("mysql_connect_failed", error=str(e), exc_info=True)
             raise
 
     def disconnect(self) -> None:
-        if self._connection:
-            logger.debug("mysql_disconnect_requested")
-            self._connection.close()
-            self._connection = None
-            logger.debug("mysql_disconnected")
+        if not self._connection:
+            return
 
-    # ===================================================================
+        try:
+            self._connection.close()
+            logger.debug("mysql_disconnected")
+        except Exception as e:
+            logger.warning("mysql_disconnect_failed", error=str(e), exc_info=True)
+        finally:
+            self._connection = None
+
+    # ------------------------------------------------------------------
     # Test Connection
-    # ===================================================================
+    # ------------------------------------------------------------------
     def test_connection(self) -> ConnectionTestResult:
-        logger.info(
-            "mysql_test_connection_requested",
-            host=self.host,
-            database=self.database,
-        )
+        logger.info("mysql_test_connection_started", host=self.host)
 
         try:
             self.connect()
-            with self._connection.cursor() as cursor:
-                cursor.execute("SELECT VERSION()")
-                version = cursor.fetchone()["VERSION()"]
-
-            logger.info(
-                "mysql_test_connection_success",
-                version=version,
-            )
+            with self._connection.cursor() as cur:
+                cur.execute("SELECT VERSION() AS version")
+                version = cur.fetchone()["version"]
 
             return ConnectionTestResult(
-                success=True,
-                message="Connected",
+                True,
+                "Connected successfully",
                 metadata={"version": version},
             )
 
         except Exception as e:
-            logger.error(
-                "mysql_test_connection_failed",
-                error=str(e),
-                exc_info=True,
-            )
-            return ConnectionTestResult(success=False, message=str(e))
+            logger.error("mysql_test_failed", error=str(e), exc_info=True)
+            return ConnectionTestResult(False, str(e))
 
         finally:
             self.disconnect()
 
-    # ===================================================================
+    # ------------------------------------------------------------------
     # Schema Discovery
-    # ===================================================================
+    # ------------------------------------------------------------------
     def discover_schema(self) -> Schema:
-        logger.info(
-            "mysql_schema_discovery_requested",
-            database=self.database,
-        )
+        logger.info("mysql_schema_discovery_started", database=self.database)
 
         self.connect()
         tables = []
 
         try:
-            with self._connection.cursor() as cursor:
-                cursor.execute("SHOW TABLES")
-                table_names = [list(row.values())[0] for row in cursor.fetchall()]
+            with self._connection.cursor() as cur:
+                # List tables
+                cur.execute("SHOW TABLES")
+                table_names = [list(row.values())[0] for row in cur.fetchall()]
 
-                logger.debug(
-                    "mysql_schema_table_list_retrieved",
-                    table_count=len(table_names),
-                )
+                logger.debug("mysql_tables_listed", count=len(table_names))
 
-                for table_name in table_names:
-                    logger.debug(
-                        "mysql_schema_describe_table_started",
-                        table=table_name,
-                    )
+                for table in table_names:
+                    tables.append(self._describe_table(cur, table))
 
-                    cursor.execute(f"DESCRIBE `{table_name}`")
-                    columns = []
-
-                    for col_row in cursor.fetchall():
-                        col_name = col_row["Field"]
-                        col_type_raw = col_row["Type"].split("(")[0]
-                        nullable = col_row["Null"] == "YES"
-                        is_pk = col_row["Key"] == "PRI"
-
-                        mapped_type = self.TYPE_MAPPING.get(col_type_raw, DataType.STRING)
-
-                        columns.append(
-                            Column(
-                                name=col_name,
-                                data_type=mapped_type,
-                                nullable=nullable,
-                                primary_key=is_pk,
-                                default_value=col_row["Default"],
-                            )
-                        )
-
-                    cursor.execute(f"SELECT COUNT(*) as cnt FROM `{table_name}`")
-                    count = cursor.fetchone()["cnt"]
-
-                    tables.append(
-                        Table(
-                            name=table_name,
-                            columns=columns,
-                            row_count=count,
-                        )
-                    )
-
-                logger.info(
-                    "mysql_schema_discovery_completed",
-                    table_count=len(tables),
-                )
-
-                return Schema(tables=tables)
+            logger.info("mysql_schema_discovery_completed", table_count=len(tables))
+            return Schema(tables=tables)
 
         except Exception as e:
-            logger.error(
-                "mysql_schema_discovery_failed",
-                error=str(e),
-                exc_info=True,
-            )
+            logger.error("mysql_schema_discovery_failed", error=str(e), exc_info=True)
             return Schema(tables=[])
 
         finally:
             self.disconnect()
 
-    # ===================================================================
-    # Read Data
-    # ===================================================================
+    def _describe_table(self, cur, table: str) -> Table:
+        cur.execute(f"DESCRIBE `{table}`")
+        col_rows = cur.fetchall()
+
+        cols = []
+        for row in col_rows:
+            raw_type = row["Type"].split("(")[0]
+            mapped = self.TYPE_MAPPING.get(raw_type, DataType.STRING)
+
+            cols.append(
+                Column(
+                    name=row["Field"],
+                    data_type=mapped,
+                    nullable=(row["Null"] == "YES"),
+                    primary_key=(row["Key"] == "PRI"),
+                    default_value=row["Default"],
+                )
+            )
+
+        cur.execute(f"SELECT COUNT(*) AS cnt FROM `{table}`")
+        count = cur.fetchone()["cnt"]
+
+        return Table(
+            name=table,
+            columns=cols,
+            row_count=count,
+        )
+
+    # ------------------------------------------------------------------
+    # Record Count
+    # ------------------------------------------------------------------
+    def get_record_count(self, stream: str) -> int:
+        logger.info("mysql_record_count_requested", stream=stream)
+
+        self.connect()
+        try:
+            with self._connection.cursor() as cur:
+                cur.execute(f"SELECT COUNT(*) AS cnt FROM `{stream}`")
+                return cur.fetchone()["cnt"]
+        except Exception as e:
+            logger.error("mysql_record_count_failed", error=str(e), exc_info=True)
+            raise
+        finally:
+            self.disconnect()
+
+    # ------------------------------------------------------------------
+    # Streaming Read
+    # ------------------------------------------------------------------
     def read(
         self,
         stream: str,
@@ -235,10 +237,12 @@ class MySQLSource(SourceConnector):
         query: str | None = None,
     ) -> Iterator[Record]:
 
+        if not stream and not query:
+            raise ValueError("MySQLSource requires either stream or query.")
+
         logger.info(
-            "mysql_read_requested",
+            "mysql_read_started",
             stream=stream,
-            database=self.database,
             has_state=bool(state),
             has_query=bool(query),
         )
@@ -246,7 +250,10 @@ class MySQLSource(SourceConnector):
         self.connect()
 
         try:
-            with self._connection.cursor() as cursor:
+            with self._connection.cursor() as cur:
+                # -------------------------
+                # Choose SQL
+                # -------------------------
                 if query:
                     sql = query
                     params = []
@@ -261,71 +268,26 @@ class MySQLSource(SourceConnector):
                     sql = f"SELECT * FROM `{stream}`"
                     params = []
 
-                logger.debug(
-                    "mysql_read_query_prepared",
-                    sql_preview=sql[:250],
-                    param_count=len(params),
-                )
+                logger.debug("mysql_sql_prepared", sql_preview=sql[:250], params=params)
 
-                cursor.execute(sql, params)
+                # Execute
+                cur.execute(sql, params)
 
+                # -------------------------
+                # Stream rows
+                # -------------------------
                 while True:
-                    rows = cursor.fetchmany(self._batch_size)
+                    rows = cur.fetchmany(self.batch_size)
                     if not rows:
                         break
 
-                    logger.debug(
-                        "mysql_read_batch_fetched",
-                        batch_size=len(rows),
-                    )
+                    logger.debug("mysql_batch_fetched", batch_size=len(rows))
 
                     for row in rows:
                         yield Record(stream=stream, data=row)
 
         except Exception as e:
-            logger.error(
-                "mysql_read_failed",
-                stream=stream,
-                error=str(e),
-                exc_info=True,
-            )
-            raise
-
-        finally:
-            self.disconnect()
-
-    # ===================================================================
-    # Record Count
-    # ===================================================================
-    def get_record_count(self, stream: str) -> int:
-        logger.info(
-            "mysql_record_count_requested",
-            stream=stream,
-            database=self.database,
-        )
-
-        self.connect()
-
-        try:
-            with self._connection.cursor() as cursor:
-                cursor.execute(f"SELECT COUNT(*) as cnt FROM `{stream}`")
-                count = cursor.fetchone()["cnt"]
-
-                logger.info(
-                    "mysql_record_count_retrieved",
-                    stream=stream,
-                    record_count=count,
-                )
-
-                return count
-
-        except Exception as e:
-            logger.error(
-                "mysql_record_count_failed",
-                stream=stream,
-                error=str(e),
-                exc_info=True,
-            )
+            logger.error("mysql_read_failed", error=str(e), exc_info=True)
             raise
 
         finally:

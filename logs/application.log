@@ -1,0 +1,327 @@
+[2m2025-12-02T09:20:17.652002Z[0m [[32m[1minfo     [0m] [1mapplication_starting          [0m [36mapi_version[0m=[35m/api/v1[0m [36mapp_name[0m=[35m'Data Agent - Universal ETL'[0m [36menvironment[0m=[35mdevelopment[0m
+[2m2025-12-02T09:20:17.652002Z[0m [[32m[1minfo     [0m] [1mapplication_starting          [0m [36mapi_version[0m=[35m/api/v1[0m [36mapp_name[0m=[35m'Data Agent - Universal ETL'[0m [36menvironment[0m=[35mdevelopment[0m
+[2m2025-12-02T09:20:17.715246Z[0m [[32m[1minfo     [0m] [1mdatabase_initialized          [0m [36mmessage[0m=[35m'All database tables created/verified'[0m
+[2m2025-12-02T09:20:17.715246Z[0m [[32m[1minfo     [0m] [1mdatabase_initialized          [0m [36mmessage[0m=[35m'All database tables created/verified'[0m
+[2m2025-12-02T09:20:17.715379Z[0m [[32m[1minfo     [0m] [1mdatabase_connected            [0m [36mconnection_string[0m=[35mlocalhost:5432/data_agent_system[0m
+[2m2025-12-02T09:20:17.715379Z[0m [[32m[1minfo     [0m] [1mdatabase_connected            [0m [36mconnection_string[0m=[35mlocalhost:5432/data_agent_system[0m
+[2m2025-12-02T09:20:17.715440Z[0m [[32m[1minfo     [0m] [1mconnectors_registered         [0m [36mdestination_count[0m=[35m11[0m [36mdestinations[0m=[35m['postgresql', 'sqlite', 'local_file', 's3', 'oracle', 'mysql', 'mssql', 'mongodb', 'snowflake', 'bigquery', 'singer'][0m [36msource_count[0m=[35m11[0m [36msources[0m=[35m['postgresql', 'sqlite', 'local_file', 's3', 'oracle', 'mysql', 'mssql', 'mongodb', 'snowflake', 'bigquery', 'singer'][0m
+[2m2025-12-02T09:20:17.715440Z[0m [[32m[1minfo     [0m] [1mconnectors_registered         [0m [36mdestination_count[0m=[35m11[0m [36mdestinations[0m=[35m['postgresql', 'sqlite', 'local_file', 's3', 'oracle', 'mysql', 'mssql', 'mongodb', 'snowflake', 'bigquery', 'singer'][0m [36msource_count[0m=[35m11[0m [36msources[0m=[35m['postgresql', 'sqlite', 'local_file', 's3', 'oracle', 'mysql', 'mssql', 'mongodb', 'snowflake', 'bigquery', 'singer'][0m
+[2m2025-12-02T09:20:17.716851Z[0m [[32m[1minfo     [0m] [1mcache_connection_successful   [0m [36mredis_url[0m=[35mredis://localhost:6379/0[0m
+[2m2025-12-02T09:20:17.716851Z[0m [[32m[1minfo     [0m] [1mcache_connection_successful   [0m [36mredis_url[0m=[35mredis://localhost:6379/0[0m
+[2m2025-12-02T09:20:17.718367Z[0m [[32m[1minfo     [0m] [1mredis_available               [0m [36mconnected_clients[0m=[35m15[0m [36mmemory_used[0m=[35m1.78M[0m [36mtotal_keys[0m=[35m0[0m
+[2m2025-12-02T09:20:17.718367Z[0m [[32m[1minfo     [0m] [1mredis_available               [0m [36mconnected_clients[0m=[35m15[0m [36mmemory_used[0m=[35m1.78M[0m [36mtotal_keys[0m=[35m0[0m
+[2m2025-12-02T09:20:17.718430Z[0m [[32m[1minfo     [0m] [1mapplication_ready             [0m [36mconnectors_registered[0m=[35m{'sources': 11, 'destinations': 11}[0m [36mdatabase[0m=[35mconnected[0m [36mredis[0m=[35m{'available': True, 'memory_used': '1.78M', 'total_keys': 0}[0m
+[2m2025-12-02T09:20:17.718430Z[0m [[32m[1minfo     [0m] [1mapplication_ready             [0m [36mconnectors_registered[0m=[35m{'sources': 11, 'destinations': 11}[0m [36mdatabase[0m=[35mconnected[0m [36mredis[0m=[35m{'available': True, 'memory_used': '1.78M', 'total_keys': 0}[0m
+[2m2025-12-02T09:21:11.720834Z[0m [[32m[1minfo     [0m] [1mapplication_shutting_down     [0m [36mmessage[0m=[35m'Graceful shutdown initiated'[0m
+[2m2025-12-02T09:21:11.720834Z[0m [[32m[1minfo     [0m] [1mapplication_shutting_down     [0m [36mmessage[0m=[35m'Graceful shutdown initiated'[0m
+[2m2025-12-02T09:21:11.722914Z[0m [[32m[1minfo     [0m] [1mapplication_shutdown_complete [0m [36mmessage[0m=[35m'All services stopped'[0m
+[2m2025-12-02T09:21:11.722914Z[0m [[32m[1minfo     [0m] [1mapplication_shutdown_complete [0m [36mmessage[0m=[35m'All services stopped'[0m
+[2m2025-12-02T09:21:13.733339Z[0m [[32m[1minfo     [0m] [1mapplication_starting          [0m [36mapi_version[0m=[35m/api/v1[0m [36mapp_name[0m=[35m'Data Agent - Universal ETL'[0m [36menvironment[0m=[35mdevelopment[0m
+[2m2025-12-02T09:21:13.733339Z[0m [[32m[1minfo     [0m] [1mapplication_starting          [0m [36mapi_version[0m=[35m/api/v1[0m [36mapp_name[0m=[35m'Data Agent - Universal ETL'[0m [36menvironment[0m=[35mdevelopment[0m
+[2m2025-12-02T09:21:13.831286Z[0m [[32m[1minfo     [0m] [1mdatabase_initialized          [0m [36mmessage[0m=[35m'All database tables created/verified'[0m
+[2m2025-12-02T09:21:13.831286Z[0m [[32m[1minfo     [0m] [1mdatabase_initialized          [0m [36mmessage[0m=[35m'All database tables created/verified'[0m
+[2m2025-12-02T09:21:13.831501Z[0m [[32m[1minfo     [0m] [1mdatabase_connected            [0m [36mconnection_string[0m=[35mlocalhost:5432/data_agent_system[0m
+[2m2025-12-02T09:21:13.831501Z[0m [[32m[1minfo     [0m] [1mdatabase_connected            [0m [36mconnection_string[0m=[35mlocalhost:5432/data_agent_system[0m
+[2m2025-12-02T09:21:13.831571Z[0m [[32m[1minfo     [0m] [1mconnectors_registered         [0m [36mdestination_count[0m=[35m11[0m [36mdestinations[0m=[35m['postgresql', 'sqlite', 'local_file', 's3', 'oracle', 'mysql', 'mssql', 'mongodb', 'snowflake', 'bigquery', 'singer'][0m [36msource_count[0m=[35m11[0m [36msources[0m=[35m['postgresql', 'sqlite', 'local_file', 's3', 'oracle', 'mysql', 'mssql', 'mongodb', 'snowflake', 'bigquery', 'singer'][0m
+[2m2025-12-02T09:21:13.831571Z[0m [[32m[1minfo     [0m] [1mconnectors_registered         [0m [36mdestination_count[0m=[35m11[0m [36mdestinations[0m=[35m['postgresql', 'sqlite', 'local_file', 's3', 'oracle', 'mysql', 'mssql', 'mongodb', 'snowflake', 'bigquery', 'singer'][0m [36msource_count[0m=[35m11[0m [36msources[0m=[35m['postgresql', 'sqlite', 'local_file', 's3', 'oracle', 'mysql', 'mssql', 'mongodb', 'snowflake', 'bigquery', 'singer'][0m
+[2m2025-12-02T09:21:13.832933Z[0m [[32m[1minfo     [0m] [1mcache_connection_successful   [0m [36mredis_url[0m=[35mredis://localhost:6379/0[0m
+[2m2025-12-02T09:21:13.832933Z[0m [[32m[1minfo     [0m] [1mcache_connection_successful   [0m [36mredis_url[0m=[35mredis://localhost:6379/0[0m
+[2m2025-12-02T09:21:13.834183Z[0m [[32m[1minfo     [0m] [1mredis_available               [0m [36mconnected_clients[0m=[35m15[0m [36mmemory_used[0m=[35m1.78M[0m [36mtotal_keys[0m=[35m0[0m
+[2m2025-12-02T09:21:13.834183Z[0m [[32m[1minfo     [0m] [1mredis_available               [0m [36mconnected_clients[0m=[35m15[0m [36mmemory_used[0m=[35m1.78M[0m [36mtotal_keys[0m=[35m0[0m
+[2m2025-12-02T09:21:13.834307Z[0m [[32m[1minfo     [0m] [1mapplication_ready             [0m [36mconnectors_registered[0m=[35m{'sources': 11, 'destinations': 11}[0m [36mdatabase[0m=[35mconnected[0m [36mredis[0m=[35m{'available': True, 'memory_used': '1.78M', 'total_keys': 0}[0m
+[2m2025-12-02T09:21:13.834307Z[0m [[32m[1minfo     [0m] [1mapplication_ready             [0m [36mconnectors_registered[0m=[35m{'sources': 11, 'destinations': 11}[0m [36mdatabase[0m=[35mconnected[0m [36mredis[0m=[35m{'available': True, 'memory_used': '1.78M', 'total_keys': 0}[0m
+[2m2025-12-02T09:22:14.709603Z[0m [[32m[1minfo     [0m] [1mapplication_shutting_down     [0m [36mmessage[0m=[35m'Graceful shutdown initiated'[0m
+[2m2025-12-02T09:22:14.709603Z[0m [[32m[1minfo     [0m] [1mapplication_shutting_down     [0m [36mmessage[0m=[35m'Graceful shutdown initiated'[0m
+[2m2025-12-02T09:22:14.710586Z[0m [[32m[1minfo     [0m] [1mapplication_shutdown_complete [0m [36mmessage[0m=[35m'All services stopped'[0m
+[2m2025-12-02T09:22:14.710586Z[0m [[32m[1minfo     [0m] [1mapplication_shutdown_complete [0m [36mmessage[0m=[35m'All services stopped'[0m
+[2m2025-12-02T09:22:16.706656Z[0m [[32m[1minfo     [0m] [1mapplication_starting          [0m [36mapi_version[0m=[35m/api/v1[0m [36mapp_name[0m=[35m'Data Agent - Universal ETL'[0m [36menvironment[0m=[35mdevelopment[0m
+[2m2025-12-02T09:22:16.706656Z[0m [[32m[1minfo     [0m] [1mapplication_starting          [0m [36mapi_version[0m=[35m/api/v1[0m [36mapp_name[0m=[35m'Data Agent - Universal ETL'[0m [36menvironment[0m=[35mdevelopment[0m
+[2m2025-12-02T09:22:16.781613Z[0m [[32m[1minfo     [0m] [1mdatabase_initialized          [0m [36mmessage[0m=[35m'All database tables created/verified'[0m
+[2m2025-12-02T09:22:16.781613Z[0m [[32m[1minfo     [0m] [1mdatabase_initialized          [0m [36mmessage[0m=[35m'All database tables created/verified'[0m
+[2m2025-12-02T09:22:16.781740Z[0m [[32m[1minfo     [0m] [1mdatabase_connected            [0m [36mconnection_string[0m=[35mlocalhost:5432/data_agent_system[0m
+[2m2025-12-02T09:22:16.781740Z[0m [[32m[1minfo     [0m] [1mdatabase_connected            [0m [36mconnection_string[0m=[35mlocalhost:5432/data_agent_system[0m
+[2m2025-12-02T09:22:16.781800Z[0m [[32m[1minfo     [0m] [1mconnectors_registered         [0m [36mdestination_count[0m=[35m11[0m [36mdestinations[0m=[35m['postgresql', 'sqlite', 'local_file', 's3', 'oracle', 'mysql', 'mssql', 'mongodb', 'snowflake', 'bigquery', 'singer'][0m [36msource_count[0m=[35m11[0m [36msources[0m=[35m['postgresql', 'sqlite', 'local_file', 's3', 'oracle', 'mysql', 'mssql', 'mongodb', 'snowflake', 'bigquery', 'singer'][0m
+[2m2025-12-02T09:22:16.781800Z[0m [[32m[1minfo     [0m] [1mconnectors_registered         [0m [36mdestination_count[0m=[35m11[0m [36mdestinations[0m=[35m['postgresql', 'sqlite', 'local_file', 's3', 'oracle', 'mysql', 'mssql', 'mongodb', 'snowflake', 'bigquery', 'singer'][0m [36msource_count[0m=[35m11[0m [36msources[0m=[35m['postgresql', 'sqlite', 'local_file', 's3', 'oracle', 'mysql', 'mssql', 'mongodb', 'snowflake', 'bigquery', 'singer'][0m
+[2m2025-12-02T09:22:16.783293Z[0m [[32m[1minfo     [0m] [1mcache_connection_successful   [0m [36mredis_url[0m=[35mredis://localhost:6379/0[0m
+[2m2025-12-02T09:22:16.783293Z[0m [[32m[1minfo     [0m] [1mcache_connection_successful   [0m [36mredis_url[0m=[35mredis://localhost:6379/0[0m
+[2m2025-12-02T09:22:16.785496Z[0m [[32m[1minfo     [0m] [1mredis_available               [0m [36mconnected_clients[0m=[35m15[0m [36mmemory_used[0m=[35m1.78M[0m [36mtotal_keys[0m=[35m0[0m
+[2m2025-12-02T09:22:16.785496Z[0m [[32m[1minfo     [0m] [1mredis_available               [0m [36mconnected_clients[0m=[35m15[0m [36mmemory_used[0m=[35m1.78M[0m [36mtotal_keys[0m=[35m0[0m
+[2m2025-12-02T09:22:16.785559Z[0m [[32m[1minfo     [0m] [1mapplication_ready             [0m [36mconnectors_registered[0m=[35m{'sources': 11, 'destinations': 11}[0m [36mdatabase[0m=[35mconnected[0m [36mredis[0m=[35m{'available': True, 'memory_used': '1.78M', 'total_keys': 0}[0m
+[2m2025-12-02T09:22:16.785559Z[0m [[32m[1minfo     [0m] [1mapplication_ready             [0m [36mconnectors_registered[0m=[35m{'sources': 11, 'destinations': 11}[0m [36mdatabase[0m=[35mconnected[0m [36mredis[0m=[35m{'available': True, 'memory_used': '1.78M', 'total_keys': 0}[0m
+[2m2025-12-02T09:23:39.683691Z[0m [[32m[1minfo     [0m] [1mapplication_shutting_down     [0m [36mmessage[0m=[35m'Graceful shutdown initiated'[0m
+[2m2025-12-02T09:23:39.683691Z[0m [[32m[1minfo     [0m] [1mapplication_shutting_down     [0m [36mmessage[0m=[35m'Graceful shutdown initiated'[0m
+[2m2025-12-02T09:23:39.684912Z[0m [[32m[1minfo     [0m] [1mapplication_shutdown_complete [0m [36mmessage[0m=[35m'All services stopped'[0m
+[2m2025-12-02T09:23:39.684912Z[0m [[32m[1minfo     [0m] [1mapplication_shutdown_complete [0m [36mmessage[0m=[35m'All services stopped'[0m
+[2m2025-12-02T09:23:41.657384Z[0m [[32m[1minfo     [0m] [1mapplication_starting          [0m [36mapi_version[0m=[35m/api/v1[0m [36mapp_name[0m=[35m'Data Agent - Universal ETL'[0m [36menvironment[0m=[35mdevelopment[0m
+[2m2025-12-02T09:23:41.657384Z[0m [[32m[1minfo     [0m] [1mapplication_starting          [0m [36mapi_version[0m=[35m/api/v1[0m [36mapp_name[0m=[35m'Data Agent - Universal ETL'[0m [36menvironment[0m=[35mdevelopment[0m
+[2m2025-12-02T09:23:41.721392Z[0m [[32m[1minfo     [0m] [1mdatabase_initialized          [0m [36mmessage[0m=[35m'All database tables created/verified'[0m
+[2m2025-12-02T09:23:41.721392Z[0m [[32m[1minfo     [0m] [1mdatabase_initialized          [0m [36mmessage[0m=[35m'All database tables created/verified'[0m
+[2m2025-12-02T09:23:41.721518Z[0m [[32m[1minfo     [0m] [1mdatabase_connected            [0m [36mconnection_string[0m=[35mlocalhost:5432/data_agent_system[0m
+[2m2025-12-02T09:23:41.721518Z[0m [[32m[1minfo     [0m] [1mdatabase_connected            [0m [36mconnection_string[0m=[35mlocalhost:5432/data_agent_system[0m
+[2m2025-12-02T09:23:41.721575Z[0m [[32m[1minfo     [0m] [1mconnectors_registered         [0m [36mdestination_count[0m=[35m11[0m [36mdestinations[0m=[35m['postgresql', 'sqlite', 'local_file', 's3', 'oracle', 'mysql', 'mssql', 'mongodb', 'snowflake', 'bigquery', 'singer'][0m [36msource_count[0m=[35m11[0m [36msources[0m=[35m['postgresql', 'sqlite', 'local_file', 's3', 'oracle', 'mysql', 'mssql', 'mongodb', 'snowflake', 'bigquery', 'singer'][0m
+[2m2025-12-02T09:23:41.721575Z[0m [[32m[1minfo     [0m] [1mconnectors_registered         [0m [36mdestination_count[0m=[35m11[0m [36mdestinations[0m=[35m['postgresql', 'sqlite', 'local_file', 's3', 'oracle', 'mysql', 'mssql', 'mongodb', 'snowflake', 'bigquery', 'singer'][0m [36msource_count[0m=[35m11[0m [36msources[0m=[35m['postgresql', 'sqlite', 'local_file', 's3', 'oracle', 'mysql', 'mssql', 'mongodb', 'snowflake', 'bigquery', 'singer'][0m
+[2m2025-12-02T09:23:41.723060Z[0m [[32m[1minfo     [0m] [1mcache_connection_successful   [0m [36mredis_url[0m=[35mredis://localhost:6379/0[0m
+[2m2025-12-02T09:23:41.723060Z[0m [[32m[1minfo     [0m] [1mcache_connection_successful   [0m [36mredis_url[0m=[35mredis://localhost:6379/0[0m
+[2m2025-12-02T09:23:41.724628Z[0m [[32m[1minfo     [0m] [1mredis_available               [0m [36mconnected_clients[0m=[35m15[0m [36mmemory_used[0m=[35m1.78M[0m [36mtotal_keys[0m=[35m0[0m
+[2m2025-12-02T09:23:41.724628Z[0m [[32m[1minfo     [0m] [1mredis_available               [0m [36mconnected_clients[0m=[35m15[0m [36mmemory_used[0m=[35m1.78M[0m [36mtotal_keys[0m=[35m0[0m
+[2m2025-12-02T09:23:41.724689Z[0m [[32m[1minfo     [0m] [1mapplication_ready             [0m [36mconnectors_registered[0m=[35m{'sources': 11, 'destinations': 11}[0m [36mdatabase[0m=[35mconnected[0m [36mredis[0m=[35m{'available': True, 'memory_used': '1.78M', 'total_keys': 0}[0m
+[2m2025-12-02T09:23:41.724689Z[0m [[32m[1minfo     [0m] [1mapplication_ready             [0m [36mconnectors_registered[0m=[35m{'sources': 11, 'destinations': 11}[0m [36mdatabase[0m=[35mconnected[0m [36mredis[0m=[35m{'available': True, 'memory_used': '1.78M', 'total_keys': 0}[0m
+[2m2025-12-02T09:25:17.132072Z[0m [[32m[1minfo     [0m] [1mapplication_shutting_down     [0m [36mmessage[0m=[35m'Graceful shutdown initiated'[0m
+[2m2025-12-02T09:25:17.132072Z[0m [[32m[1minfo     [0m] [1mapplication_shutting_down     [0m [36mmessage[0m=[35m'Graceful shutdown initiated'[0m
+[2m2025-12-02T09:25:17.135472Z[0m [[32m[1minfo     [0m] [1mapplication_shutdown_complete [0m [36mmessage[0m=[35m'All services stopped'[0m
+[2m2025-12-02T09:25:17.135472Z[0m [[32m[1minfo     [0m] [1mapplication_shutdown_complete [0m [36mmessage[0m=[35m'All services stopped'[0m
+[2m2025-12-02T13:05:16.353133Z[0m [[32m[1minfo     [0m] [1mapplication_starting          [0m [36mapi_version[0m=[35m/api/v1[0m [36mapp_name[0m=[35m'Data Agent - Universal ETL'[0m [36menvironment[0m=[35mdevelopment[0m
+[2m2025-12-02T13:05:16.626864Z[0m [[32m[1minfo     [0m] [1mdatabase_initialized          [0m [36mmessage[0m=[35m'All database tables created/verified'[0m
+[2m2025-12-02T13:05:16.627130Z[0m [[32m[1minfo     [0m] [1mdatabase_connected            [0m [36mconnection_string[0m=[35mlocalhost:5432/data_agent_system[0m
+[2m2025-12-02T13:05:16.627221Z[0m [[31m[1merror    [0m] [1mapplication_startup_failed    [0m [36merror[0m=[35m"type object 'ConnectorFactory' has no attribute 'list_sources'"[0m [36merror_type[0m=[35mAttributeError[0m
+Traceback (most recent call last):
+  File "/Users/abhishek/Dev/Projects/data-agent/backend/main.py", line 156, in lifespan
+    connector_stats = register_connectors()
+  File "/Users/abhishek/Dev/Projects/data-agent/backend/main.py", line 60, in register_connectors
+    sources = factory.ConnectorFactory.list_sources()
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: type object 'ConnectorFactory' has no attribute 'list_sources'
+[2m2025-12-02T13:06:10.804009Z[0m [[32m[1minfo     [0m] [1mapplication_starting          [0m [36mapi_version[0m=[35m/api/v1[0m [36mapp_name[0m=[35m'Data Agent - Universal ETL'[0m [36menvironment[0m=[35mdevelopment[0m
+[2m2025-12-02T13:06:10.870931Z[0m [[32m[1minfo     [0m] [1mdatabase_initialized          [0m [36mmessage[0m=[35m'All database tables created/verified'[0m
+[2m2025-12-02T13:06:10.871068Z[0m [[32m[1minfo     [0m] [1mdatabase_connected            [0m [36mconnection_string[0m=[35mlocalhost:5432/data_agent_system[0m
+[2m2025-12-02T13:06:10.871121Z[0m [[32m[1minfo     [0m] [1mconnectors_registered         [0m [36mdestination_count[0m=[35m11[0m [36mdestinations[0m=[35m['postgresql', 'mysql', 'mssql', 'oracle', 'sqlite', 'mongodb', 's3', 'snowflake', 'bigquery', 'local_file', 'singer'][0m [36msource_count[0m=[35m11[0m [36msources[0m=[35m['postgresql', 'mysql', 'mssql', 'oracle', 'sqlite', 'mongodb', 's3', 'snowflake', 'bigquery', 'local_file', 'singer'][0m
+[2m2025-12-02T13:06:10.873726Z[0m [[32m[1minfo     [0m] [1mcache_connected               [0m [36mredis_url[0m=[35mredis://localhost:6379/0[0m
+[2m2025-12-02T13:06:10.879008Z[0m [[32m[1minfo     [0m] [1mredis_available               [0m [36mconnected_clients[0m=[35m15[0m [36mmemory_used[0m=[35m1.79M[0m [36mtotal_keys[0m=[35m0[0m
+[2m2025-12-02T13:06:10.879090Z[0m [[32m[1minfo     [0m] [1mapplication_ready             [0m [36mconnectors_registered[0m=[35m{'sources': 11, 'destinations': 11}[0m [36mdatabase[0m=[35mconnected[0m [36mredis[0m=[35m{'available': True, 'memory_used': '1.79M', 'total_keys': 0}[0m
+[2m2025-12-02T13:07:18.643919Z[0m [[32m[1minfo     [0m] [1mstarting_uvicorn              [0m [36mhost[0m=[35m0.0.0.0[0m [36mport[0m=[35m8000[0m [36mreload[0m=[35mTrue[0m
+[2m2025-12-02T13:07:19.848428Z[0m [[32m[1minfo     [0m] [1mapplication_starting          [0m [36mapi_version[0m=[35m/api/v1[0m [36mapp_name[0m=[35m'Data Agent - Universal ETL'[0m [36menvironment[0m=[35mdevelopment[0m
+[2m2025-12-02T13:07:19.915978Z[0m [[32m[1minfo     [0m] [1mdatabase_initialized          [0m [36mmessage[0m=[35m'All database tables created/verified'[0m
+[2m2025-12-02T13:07:19.916109Z[0m [[32m[1minfo     [0m] [1mdatabase_connected            [0m [36mconnection_string[0m=[35mlocalhost:5432/data_agent_system[0m
+[2m2025-12-02T13:07:19.916164Z[0m [[32m[1minfo     [0m] [1mconnectors_registered         [0m [36mdestination_count[0m=[35m11[0m [36mdestinations[0m=[35m['postgresql', 'mysql', 'mssql', 'oracle', 'sqlite', 'mongodb', 's3', 'snowflake', 'bigquery', 'local_file', 'singer'][0m [36msource_count[0m=[35m11[0m [36msources[0m=[35m['postgresql', 'mysql', 'mssql', 'oracle', 'sqlite', 'mongodb', 's3', 'snowflake', 'bigquery', 'local_file', 'singer'][0m
+[2m2025-12-02T13:07:19.917158Z[0m [[32m[1minfo     [0m] [1mcache_connected               [0m [36mredis_url[0m=[35mredis://localhost:6379/0[0m
+[2m2025-12-02T13:07:19.919573Z[0m [[32m[1minfo     [0m] [1mredis_available               [0m [36mconnected_clients[0m=[35m15[0m [36mmemory_used[0m=[35m1.79M[0m [36mtotal_keys[0m=[35m0[0m
+[2m2025-12-02T13:07:19.919631Z[0m [[32m[1minfo     [0m] [1mapplication_ready             [0m [36mconnectors_registered[0m=[35m{'sources': 11, 'destinations': 11}[0m [36mdatabase[0m=[35mconnected[0m [36mredis[0m=[35m{'available': True, 'memory_used': '1.79M', 'total_keys': 0}[0m
+[2m2025-12-02T13:08:03.350267Z[0m [[31m[1merror    [0m] [1mencryption_service_access_before_initialization[0m
+[2m2025-12-02T13:08:03.365015Z[0m [[31m[1merror    [0m] [1mencryption_service_access_before_initialization[0m
+[2m2025-12-02T13:08:20.456181Z[0m [[32m[1minfo     [0m] [1msystem_initialization_requested[0m
+[2m2025-12-02T13:08:20.467886Z[0m [[33m[1mwarning  [0m] [1msystem_already_initialized    [0m
+[2m2025-12-02T13:08:30.947947Z[0m [[31m[1merror    [0m] [1mencryption_service_access_before_initialization[0m
+[2m2025-12-02T13:08:30.954835Z[0m [[31m[1merror    [0m] [1mencryption_service_access_before_initialization[0m
+[2m2025-12-02T13:08:45.677623Z[0m [[32m[1minfo     [0m] [1msystem_initialization_requested[0m
+[2m2025-12-02T13:08:45.683793Z[0m [[33m[1mwarning  [0m] [1msystem_already_initialized    [0m
+[2m2025-12-02T13:08:46.542845Z[0m [[32m[1minfo     [0m] [1msystem_initialization_requested[0m
+[2m2025-12-02T13:08:46.547150Z[0m [[33m[1mwarning  [0m] [1msystem_already_initialized    [0m
+[2m2025-12-02T13:09:50.296196Z[0m [[32m[1minfo     [0m] [1mapplication_starting          [0m [36mapi_version[0m=[35m/api/v1[0m [36mapp_name[0m=[35m'Data Agent - Universal ETL'[0m [36menvironment[0m=[35mdevelopment[0m
+[2m2025-12-02T13:09:50.389341Z[0m [[32m[1minfo     [0m] [1mdatabase_initialized          [0m [36mmessage[0m=[35m'All database tables created/verified'[0m
+[2m2025-12-02T13:09:50.389475Z[0m [[32m[1minfo     [0m] [1mdatabase_connected            [0m [36mconnection_string[0m=[35mlocalhost:5432/data_agent_system[0m
+[2m2025-12-02T13:09:50.389531Z[0m [[32m[1minfo     [0m] [1mconnectors_registered         [0m [36mdestination_count[0m=[35m11[0m [36mdestinations[0m=[35m['postgresql', 'mysql', 'mssql', 'oracle', 'sqlite', 'mongodb', 's3', 'snowflake', 'bigquery', 'local_file', 'singer'][0m [36msource_count[0m=[35m11[0m [36msources[0m=[35m['postgresql', 'mysql', 'mssql', 'oracle', 'sqlite', 'mongodb', 's3', 'snowflake', 'bigquery', 'local_file', 'singer'][0m
+[2m2025-12-02T13:09:50.390799Z[0m [[32m[1minfo     [0m] [1mcache_connected               [0m [36mredis_url[0m=[35mredis://localhost:6379/0[0m
+[2m2025-12-02T13:09:50.394947Z[0m [[32m[1minfo     [0m] [1mredis_available               [0m [36mconnected_clients[0m=[35m16[0m [36mmemory_used[0m=[35m1.79M[0m [36mtotal_keys[0m=[35m0[0m
+[2m2025-12-02T13:09:50.395023Z[0m [[32m[1minfo     [0m] [1mapplication_ready             [0m [36mconnectors_registered[0m=[35m{'sources': 11, 'destinations': 11}[0m [36mdatabase[0m=[35mconnected[0m [36mredis[0m=[35m{'available': True, 'memory_used': '1.79M', 'total_keys': 0}[0m
+[2m2025-12-02T13:09:50.396469Z[0m [[32m[1minfo     [0m] [1mapplication_shutting_down     [0m [36mmessage[0m=[35m'Graceful shutdown initiated'[0m
+[2m2025-12-02T13:09:50.396528Z[0m [[32m[1minfo     [0m] [1mapplication_shutdown_complete [0m [36mmessage[0m=[35m'All services stopped'[0m
+1 change detected
+1 change detected
+[2m2025-12-02T13:11:18.046917Z[0m [[32m[1minfo     [0m] [1mapplication_shutting_down     [0m [36mmessage[0m=[35m'Graceful shutdown initiated'[0m
+[2m2025-12-02T13:11:18.047410Z[0m [[32m[1minfo     [0m] [1mapplication_shutdown_complete [0m [36mmessage[0m=[35m'All services stopped'[0m
+1 change detected
+3 changes detected
+[2m2025-12-02T13:11:20.395149Z[0m [[32m[1minfo     [0m] [1mapplication_starting          [0m [36mapi_version[0m=[35m/api/v1[0m [36mapp_name[0m=[35m'Data Agent - Universal ETL'[0m [36menvironment[0m=[35mdevelopment[0m
+[2m2025-12-02T13:11:20.495862Z[0m [[32m[1minfo     [0m] [1mdatabase_initialized          [0m [36mmessage[0m=[35m'All database tables created/verified'[0m
+[2m2025-12-02T13:11:20.496000Z[0m [[32m[1minfo     [0m] [1mdatabase_connected            [0m [36mconnection_string[0m=[35mlocalhost:5432/data_agent_system[0m
+[2m2025-12-02T13:11:20.496054Z[0m [[32m[1minfo     [0m] [1mconnectors_registered         [0m [36mdestination_count[0m=[35m11[0m [36mdestinations[0m=[35m['postgresql', 'mysql', 'mssql', 'oracle', 'sqlite', 'mongodb', 's3', 'snowflake', 'bigquery', 'local_file', 'singer'][0m [36msource_count[0m=[35m11[0m [36msources[0m=[35m['postgresql', 'mysql', 'mssql', 'oracle', 'sqlite', 'mongodb', 's3', 'snowflake', 'bigquery', 'local_file', 'singer'][0m
+[2m2025-12-02T13:11:20.497102Z[0m [[32m[1minfo     [0m] [1mcache_connected               [0m [36mredis_url[0m=[35mredis://localhost:6379/0[0m
+[2m2025-12-02T13:11:20.500366Z[0m [[32m[1minfo     [0m] [1mredis_available               [0m [36mconnected_clients[0m=[35m15[0m [36mmemory_used[0m=[35m1.79M[0m [36mtotal_keys[0m=[35m0[0m
+[2m2025-12-02T13:11:20.500417Z[0m [[32m[1minfo     [0m] [1mapplication_ready             [0m [36mconnectors_registered[0m=[35m{'sources': 11, 'destinations': 11}[0m [36mdatabase[0m=[35mconnected[0m [36mredis[0m=[35m{'available': True, 'memory_used': '1.79M', 'total_keys': 0}[0m
+[2m2025-12-02T13:12:55.200334Z[0m [[32m[1minfo     [0m] [1msystem_initialization_requested[0m
+[2m2025-12-02T13:12:55.228913Z[0m [[33m[1mwarning  [0m] [1msystem_already_initialized    [0m
+[2m2025-12-02T13:22:07.899537Z[0m [[31m[1merror    [0m] [1mencryption_service_access_before_initialization[0m
+[2m2025-12-02T13:22:07.912435Z[0m [[31m[1merror    [0m] [1mencryption_service_access_before_initialization[0m
+[2m2025-12-02T13:22:08.987151Z[0m [[31m[1merror    [0m] [1mencryption_service_access_before_initialization[0m
+[2m2025-12-02T13:22:08.990253Z[0m [[31m[1merror    [0m] [1mencryption_service_access_before_initialization[0m
+[2m2025-12-02T13:22:09.133328Z[0m [[31m[1merror    [0m] [1mencryption_service_access_before_initialization[0m
+[2m2025-12-02T13:22:09.136437Z[0m [[31m[1merror    [0m] [1mencryption_service_access_before_initialization[0m
+[2m2025-12-02T13:26:57.238927Z[0m [[31m[1merror    [0m] [1mencryption_service_access_before_initialization[0m
+[2m2025-12-02T13:26:57.250781Z[0m [[31m[1merror    [0m] [1mencryption_service_access_before_initialization[0m
+[2m2025-12-02T13:26:59.808376Z[0m [[31m[1merror    [0m] [1mencryption_service_access_before_initialization[0m
+[2m2025-12-02T13:26:59.814060Z[0m [[31m[1merror    [0m] [1mencryption_service_access_before_initialization[0m
+[2m2025-12-02T13:27:03.814397Z[0m [[31m[1merror    [0m] [1mencryption_service_access_before_initialization[0m
+[2m2025-12-02T13:27:03.820718Z[0m [[31m[1merror    [0m] [1mencryption_service_access_before_initialization[0m
+[2m2025-12-02T13:27:05.276025Z[0m [[31m[1merror    [0m] [1mencryption_service_access_before_initialization[0m
+[2m2025-12-02T13:27:05.280960Z[0m [[31m[1merror    [0m] [1mencryption_service_access_before_initialization[0m
+[2m2025-12-02T13:27:05.992912Z[0m [[31m[1merror    [0m] [1mencryption_service_access_before_initialization[0m
+[2m2025-12-02T13:27:05.997584Z[0m [[31m[1merror    [0m] [1mencryption_service_access_before_initialization[0m
+[2m2025-12-02T13:27:06.128118Z[0m [[31m[1merror    [0m] [1mencryption_service_access_before_initialization[0m
+[2m2025-12-02T13:27:06.130888Z[0m [[31m[1merror    [0m] [1mencryption_service_access_before_initialization[0m
+[2m2025-12-02T13:27:08.670808Z[0m [[31m[1merror    [0m] [1mencryption_service_access_before_initialization[0m
+[2m2025-12-02T13:27:08.675452Z[0m [[31m[1merror    [0m] [1mencryption_service_access_before_initialization[0m
+[2m2025-12-02T13:30:09.538285Z[0m [[31m[1merror    [0m] [1mencryption_service_access_before_initialization[0m
+[2m2025-12-02T13:30:09.543088Z[0m [[31m[1merror    [0m] [1mencryption_service_access_before_initialization[0m
+[2m2025-12-02T13:30:14.664574Z[0m [[31m[1merror    [0m] [1mencryption_service_access_before_initialization[0m
+[2m2025-12-02T13:30:14.671564Z[0m [[31m[1merror    [0m] [1mencryption_service_access_before_initialization[0m
+[2m2025-12-02T13:32:46.203584Z[0m [[31m[1merror    [0m] [1mencryption_service_access_before_initialization[0m
+[2m2025-12-02T13:32:46.207773Z[0m [[31m[1merror    [0m] [1mencryption_service_access_before_initialization[0m
+[2m2025-12-02T13:32:54.102670Z[0m [[31m[1merror    [0m] [1mencryption_service_access_before_initialization[0m
+[2m2025-12-02T13:32:54.107465Z[0m [[31m[1merror    [0m] [1mencryption_service_access_before_initialization[0m
+[2m2025-12-02T13:33:07.351667Z[0m [[32m[1minfo     [0m] [1msystem_unlock_requested       [0m
+[2m2025-12-02T13:33:07.356590Z[0m [[32m[1minfo     [0m] [1minitialize_encryption_service_requested[0m
+[2m2025-12-02T13:33:07.356985Z[0m [[32m[1minfo     [0m] [1mencryption_unlock_requested   [0m
+[2m2025-12-02T13:33:07.357135Z[0m [[32m[1minfo     [0m] [1mdek_decrypt_requested         [0m
+[2m2025-12-02T13:33:07.426926Z[0m [[32m[1minfo     [0m] [1mdek_decrypt_completed         [0m
+[2m2025-12-02T13:33:07.427060Z[0m [[32m[1minfo     [0m] [1mencryption_service_unlocked   [0m
+[2m2025-12-02T13:33:07.427108Z[0m [[32m[1minfo     [0m] [1minitialize_encryption_service_completed[0m
+[2m2025-12-02T13:33:07.427142Z[0m [[32m[1minfo     [0m] [1msystem_unlocked_successfully  [0m
+[2m2025-12-02T13:33:07.492164Z[0m [[32m[1minfo     [0m] [1mjob_list_requested            [0m [36mlimit[0m=[35m5[0m [36mpipeline_id[0m=[35mNone[0m [36mskip[0m=[35m0[0m [36mstatus[0m=[35mNone[0m
+[2m2025-12-02T13:33:07.493069Z[0m [[32m[1minfo     [0m] [1mpipelines_list_requested      [0m [36mlimit[0m=[35m100[0m [36mskip[0m=[35m0[0m [36mstatus[0m=[35mNone[0m
+[2m2025-12-02T13:33:07.671030Z[0m [[32m[1minfo     [0m] [1mpipeline_list_retrieved       [0m [36mcount[0m=[35m1[0m
+[2m2025-12-02T13:33:07.671704Z[0m [[32m[1minfo     [0m] [1mjob_list_completed            [0m [36mcount[0m=[35m1[0m
+[2m2025-12-02T13:33:07.672233Z[0m [[32m[1minfo     [0m] [1mpipelines_listed              [0m [36mcount[0m=[35m1[0m
+[2m2025-12-02T13:33:08.702704Z[0m [[32m[1minfo     [0m] [1mpipelines_list_requested      [0m [36mlimit[0m=[35m100[0m [36mskip[0m=[35m0[0m [36mstatus[0m=[35mNone[0m
+[2m2025-12-02T13:33:08.703346Z[0m [[32m[1minfo     [0m] [1mjob_list_requested            [0m [36mlimit[0m=[35m5[0m [36mpipeline_id[0m=[35mNone[0m [36mskip[0m=[35m0[0m [36mstatus[0m=[35mNone[0m
+[2m2025-12-02T13:33:08.707478Z[0m [[32m[1minfo     [0m] [1mjob_list_completed            [0m [36mcount[0m=[35m1[0m
+[2m2025-12-02T13:33:08.707951Z[0m [[32m[1minfo     [0m] [1mpipeline_list_retrieved       [0m [36mcount[0m=[35m1[0m
+[2m2025-12-02T13:33:08.709236Z[0m [[32m[1minfo     [0m] [1mpipelines_listed              [0m [36mcount[0m=[35m1[0m
+[2m2025-12-02T13:33:10.732321Z[0m [[32m[1minfo     [0m] [1mjob_list_requested            [0m [36mlimit[0m=[35m5[0m [36mpipeline_id[0m=[35mNone[0m [36mskip[0m=[35m0[0m [36mstatus[0m=[35mNone[0m
+[2m2025-12-02T13:33:10.732781Z[0m [[32m[1minfo     [0m] [1mpipelines_list_requested      [0m [36mlimit[0m=[35m100[0m [36mskip[0m=[35m0[0m [36mstatus[0m=[35mNone[0m
+[2m2025-12-02T13:33:10.736610Z[0m [[32m[1minfo     [0m] [1mpipeline_list_retrieved       [0m [36mcount[0m=[35m1[0m
+[2m2025-12-02T13:33:10.737008Z[0m [[32m[1minfo     [0m] [1mjob_list_completed            [0m [36mcount[0m=[35m1[0m
+[2m2025-12-02T13:33:10.737613Z[0m [[32m[1minfo     [0m] [1mpipelines_listed              [0m [36mcount[0m=[35m1[0m
+[2m2025-12-02T13:33:14.759425Z[0m [[32m[1minfo     [0m] [1mjob_list_requested            [0m [36mlimit[0m=[35m5[0m [36mpipeline_id[0m=[35mNone[0m [36mskip[0m=[35m0[0m [36mstatus[0m=[35mNone[0m
+[2m2025-12-02T13:33:14.760061Z[0m [[32m[1minfo     [0m] [1mpipelines_list_requested      [0m [36mlimit[0m=[35m100[0m [36mskip[0m=[35m0[0m [36mstatus[0m=[35mNone[0m
+[2m2025-12-02T13:33:14.764661Z[0m [[32m[1minfo     [0m] [1mpipeline_list_retrieved       [0m [36mcount[0m=[35m1[0m
+[2m2025-12-02T13:33:14.765022Z[0m [[32m[1minfo     [0m] [1mjob_list_completed            [0m [36mcount[0m=[35m1[0m
+[2m2025-12-02T13:33:14.765812Z[0m [[32m[1minfo     [0m] [1mpipelines_listed              [0m [36mcount[0m=[35m1[0m
+[2m2025-12-02T13:33:21.809064Z[0m [[32m[1minfo     [0m] [1mtransformer_list_retrieved    [0m [36mcount[0m=[35m0[0m
+1 change detected
+[2m2025-12-02T13:35:34.258100Z[0m [[32m[1minfo     [0m] [1mapplication_shutting_down     [0m [36mmessage[0m=[35m'Graceful shutdown initiated'[0m
+[2m2025-12-02T13:35:34.259259Z[0m [[32m[1minfo     [0m] [1mapplication_shutdown_complete [0m [36mmessage[0m=[35m'All services stopped'[0m
+1 change detected
+3 changes detected
+[2m2025-12-02T13:35:36.756815Z[0m [[32m[1minfo     [0m] [1mapplication_starting          [0m [36mapi_version[0m=[35m/api/v1[0m [36mapp_name[0m=[35m'Data Agent - Universal ETL'[0m [36menvironment[0m=[35mdevelopment[0m
+[2m2025-12-02T13:35:36.828196Z[0m [[32m[1minfo     [0m] [1mdatabase_initialized          [0m [36mmessage[0m=[35m'All database tables created/verified'[0m
+[2m2025-12-02T13:35:36.828327Z[0m [[32m[1minfo     [0m] [1mdatabase_connected            [0m [36mconnection_string[0m=[35mlocalhost:5432/data_agent_system[0m
+[2m2025-12-02T13:35:36.828383Z[0m [[32m[1minfo     [0m] [1mconnectors_registered         [0m [36mdestination_count[0m=[35m11[0m [36mdestinations[0m=[35m['postgresql', 'mysql', 'mssql', 'oracle', 'sqlite', 'mongodb', 's3', 'snowflake', 'bigquery', 'local_file', 'singer'][0m [36msource_count[0m=[35m11[0m [36msources[0m=[35m['postgresql', 'mysql', 'mssql', 'oracle', 'sqlite', 'mongodb', 's3', 'snowflake', 'bigquery', 'local_file', 'singer'][0m
+[2m2025-12-02T13:35:36.829713Z[0m [[32m[1minfo     [0m] [1mcache_connected               [0m [36mredis_url[0m=[35mredis://localhost:6379/0[0m
+[2m2025-12-02T13:35:36.834209Z[0m [[32m[1minfo     [0m] [1mredis_available               [0m [36mconnected_clients[0m=[35m15[0m [36mmemory_used[0m=[35m1.79M[0m [36mtotal_keys[0m=[35m0[0m
+[2m2025-12-02T13:35:36.834269Z[0m [[32m[1minfo     [0m] [1mapplication_ready             [0m [36mconnectors_registered[0m=[35m{'sources': 11, 'destinations': 11}[0m [36mdatabase[0m=[35mconnected[0m [36mredis[0m=[35m{'available': True, 'memory_used': '1.79M', 'total_keys': 0}[0m
+[2m2025-12-02T14:56:53.041899Z[0m [[32m[1minfo     [0m] [1mjob_list_requested            [0m [36mlimit[0m=[35m5[0m [36mpipeline_id[0m=[35mNone[0m [36mskip[0m=[35m0[0m [36mstatus[0m=[35mNone[0m
+[2m2025-12-02T14:56:53.045565Z[0m [[32m[1minfo     [0m] [1mpipelines_list_requested      [0m [36mlimit[0m=[35m100[0m [36mskip[0m=[35m0[0m [36mstatus[0m=[35mNone[0m
+[2m2025-12-02T14:56:53.106558Z[0m [[32m[1minfo     [0m] [1mjob_list_completed            [0m [36mcount[0m=[35m1[0m
+[2m2025-12-02T14:56:53.107185Z[0m [[32m[1minfo     [0m] [1mpipeline_list_retrieved       [0m [36mcount[0m=[35m1[0m
+[2m2025-12-02T14:56:53.107752Z[0m [[32m[1minfo     [0m] [1mpipelines_listed              [0m [36mcount[0m=[35m1[0m
+[2m2025-12-02T14:56:54.132751Z[0m [[32m[1minfo     [0m] [1mjob_list_requested            [0m [36mlimit[0m=[35m5[0m [36mpipeline_id[0m=[35mNone[0m [36mskip[0m=[35m0[0m [36mstatus[0m=[35mNone[0m
+[2m2025-12-02T14:56:54.133218Z[0m [[32m[1minfo     [0m] [1mpipelines_list_requested      [0m [36mlimit[0m=[35m100[0m [36mskip[0m=[35m0[0m [36mstatus[0m=[35mNone[0m
+[2m2025-12-02T14:56:54.135100Z[0m [[32m[1minfo     [0m] [1mjob_list_completed            [0m [36mcount[0m=[35m1[0m
+[2m2025-12-02T14:56:54.136338Z[0m [[32m[1minfo     [0m] [1mpipeline_list_retrieved       [0m [36mcount[0m=[35m1[0m
+[2m2025-12-02T14:56:54.137658Z[0m [[32m[1minfo     [0m] [1mpipelines_listed              [0m [36mcount[0m=[35m1[0m
+[2m2025-12-02T14:56:56.151547Z[0m [[32m[1minfo     [0m] [1mjob_list_requested            [0m [36mlimit[0m=[35m5[0m [36mpipeline_id[0m=[35mNone[0m [36mskip[0m=[35m0[0m [36mstatus[0m=[35mNone[0m
+[2m2025-12-02T14:56:56.152126Z[0m [[32m[1minfo     [0m] [1mpipelines_list_requested      [0m [36mlimit[0m=[35m100[0m [36mskip[0m=[35m0[0m [36mstatus[0m=[35mNone[0m
+[2m2025-12-02T14:56:56.156214Z[0m [[32m[1minfo     [0m] [1mjob_list_completed            [0m [36mcount[0m=[35m1[0m
+[2m2025-12-02T14:56:56.156631Z[0m [[32m[1minfo     [0m] [1mpipeline_list_retrieved       [0m [36mcount[0m=[35m1[0m
+[2m2025-12-02T14:56:56.157768Z[0m [[32m[1minfo     [0m] [1mpipelines_listed              [0m [36mcount[0m=[35m1[0m
+[2m2025-12-02T14:57:00.180455Z[0m [[32m[1minfo     [0m] [1mjob_list_requested            [0m [36mlimit[0m=[35m5[0m [36mpipeline_id[0m=[35mNone[0m [36mskip[0m=[35m0[0m [36mstatus[0m=[35mNone[0m
+[2m2025-12-02T14:57:00.182467Z[0m [[32m[1minfo     [0m] [1mjob_list_completed            [0m [36mcount[0m=[35m1[0m
+[2m2025-12-02T14:57:00.183064Z[0m [[32m[1minfo     [0m] [1mpipelines_list_requested      [0m [36mlimit[0m=[35m100[0m [36mskip[0m=[35m0[0m [36mstatus[0m=[35mNone[0m
+[2m2025-12-02T14:57:00.184248Z[0m [[32m[1minfo     [0m] [1mpipeline_list_retrieved       [0m [36mcount[0m=[35m1[0m
+[2m2025-12-02T14:57:00.184868Z[0m [[32m[1minfo     [0m] [1mpipelines_listed              [0m [36mcount[0m=[35m1[0m
+[2m2025-12-02T14:57:02.770805Z[0m [[31m[1merror    [0m] [1mencryption_service_access_before_initialization[0m
+[2m2025-12-02T14:57:02.777949Z[0m [[31m[1merror    [0m] [1mencryption_service_access_before_initialization[0m
+[2m2025-12-02T14:57:09.495308Z[0m [[32m[1minfo     [0m] [1msystem_unlock_requested       [0m
+[2m2025-12-02T14:57:09.500609Z[0m [[32m[1minfo     [0m] [1minitialize_encryption_service_requested[0m
+[2m2025-12-02T14:57:09.501097Z[0m [[32m[1minfo     [0m] [1mencryption_unlock_requested   [0m
+[2m2025-12-02T14:57:09.501277Z[0m [[32m[1minfo     [0m] [1mdek_decrypt_requested         [0m
+[2m2025-12-02T14:57:09.569277Z[0m [[32m[1minfo     [0m] [1mdek_decrypt_completed         [0m
+[2m2025-12-02T14:57:09.569437Z[0m [[32m[1minfo     [0m] [1mencryption_service_unlocked   [0m
+[2m2025-12-02T14:57:09.569489Z[0m [[32m[1minfo     [0m] [1minitialize_encryption_service_completed[0m
+[2m2025-12-02T14:57:09.569526Z[0m [[32m[1minfo     [0m] [1msystem_unlocked_successfully  [0m
+[2m2025-12-02T14:57:09.622867Z[0m [[32m[1minfo     [0m] [1mjob_list_requested            [0m [36mlimit[0m=[35m5[0m [36mpipeline_id[0m=[35mNone[0m [36mskip[0m=[35m0[0m [36mstatus[0m=[35mNone[0m
+[2m2025-12-02T14:57:09.623619Z[0m [[32m[1minfo     [0m] [1mpipelines_list_requested      [0m [36mlimit[0m=[35m100[0m [36mskip[0m=[35m0[0m [36mstatus[0m=[35mNone[0m
+[2m2025-12-02T14:57:09.626178Z[0m [[32m[1minfo     [0m] [1mjob_list_completed            [0m [36mcount[0m=[35m1[0m
+[2m2025-12-02T14:57:09.626650Z[0m [[32m[1minfo     [0m] [1mpipeline_list_retrieved       [0m [36mcount[0m=[35m1[0m
+[2m2025-12-02T14:57:09.627717Z[0m [[32m[1minfo     [0m] [1mpipelines_listed              [0m [36mcount[0m=[35m1[0m
+[2m2025-12-02T14:57:10.642504Z[0m [[32m[1minfo     [0m] [1mjob_list_requested            [0m [36mlimit[0m=[35m5[0m [36mpipeline_id[0m=[35mNone[0m [36mskip[0m=[35m0[0m [36mstatus[0m=[35mNone[0m
+[2m2025-12-02T14:57:10.642776Z[0m [[32m[1minfo     [0m] [1mpipelines_list_requested      [0m [36mlimit[0m=[35m100[0m [36mskip[0m=[35m0[0m [36mstatus[0m=[35mNone[0m
+[2m2025-12-02T14:57:10.644337Z[0m [[32m[1minfo     [0m] [1mjob_list_completed            [0m [36mcount[0m=[35m1[0m
+[2m2025-12-02T14:57:10.644627Z[0m [[32m[1minfo     [0m] [1mpipeline_list_retrieved       [0m [36mcount[0m=[35m1[0m
+[2m2025-12-02T14:57:10.645136Z[0m [[32m[1minfo     [0m] [1mpipelines_listed              [0m [36mcount[0m=[35m1[0m
+[2m2025-12-02T14:57:12.662455Z[0m [[32m[1minfo     [0m] [1mjob_list_requested            [0m [36mlimit[0m=[35m5[0m [36mpipeline_id[0m=[35mNone[0m [36mskip[0m=[35m0[0m [36mstatus[0m=[35mNone[0m
+[2m2025-12-02T14:57:12.662683Z[0m [[32m[1minfo     [0m] [1mpipelines_list_requested      [0m [36mlimit[0m=[35m100[0m [36mskip[0m=[35m0[0m [36mstatus[0m=[35mNone[0m
+[2m2025-12-02T14:57:12.664831Z[0m [[32m[1minfo     [0m] [1mjob_list_completed            [0m [36mcount[0m=[35m1[0m
+[2m2025-12-02T14:57:12.665505Z[0m [[32m[1minfo     [0m] [1mpipeline_list_retrieved       [0m [36mcount[0m=[35m1[0m
+[2m2025-12-02T14:57:12.666064Z[0m [[32m[1minfo     [0m] [1mpipelines_listed              [0m [36mcount[0m=[35m1[0m
+[2m2025-12-02T14:57:16.684590Z[0m [[32m[1minfo     [0m] [1mjob_list_requested            [0m [36mlimit[0m=[35m5[0m [36mpipeline_id[0m=[35mNone[0m [36mskip[0m=[35m0[0m [36mstatus[0m=[35mNone[0m
+[2m2025-12-02T14:57:16.689253Z[0m [[32m[1minfo     [0m] [1mpipelines_list_requested      [0m [36mlimit[0m=[35m100[0m [36mskip[0m=[35m0[0m [36mstatus[0m=[35mNone[0m
+[2m2025-12-02T14:57:16.691221Z[0m [[32m[1minfo     [0m] [1mjob_list_completed            [0m [36mcount[0m=[35m1[0m
+[2m2025-12-02T14:57:16.692566Z[0m [[32m[1minfo     [0m] [1mpipeline_list_retrieved       [0m [36mcount[0m=[35m1[0m
+[2m2025-12-02T14:57:16.695037Z[0m [[32m[1minfo     [0m] [1mpipelines_listed              [0m [36mcount[0m=[35m1[0m
+[2m2025-12-02T14:57:31.638046Z[0m [[32m[1minfo     [0m] [1mapplication_shutting_down     [0m [36mmessage[0m=[35m'Graceful shutdown initiated'[0m
+[2m2025-12-02T14:57:31.639250Z[0m [[32m[1minfo     [0m] [1mapplication_shutdown_complete [0m [36mmessage[0m=[35m'All services stopped'[0m
+[2m2025-12-02T14:57:56.506657Z[0m [[32m[1minfo     [0m] [1mstarting_uvicorn              [0m [36mhost[0m=[35m0.0.0.0[0m [36mport[0m=[35m8000[0m [36mreload[0m=[35mTrue[0m
+[2m2025-12-02T14:57:57.702171Z[0m [[32m[1minfo     [0m] [1mapplication_starting          [0m [36mapi_version[0m=[35m/api/v1[0m [36mapp_name[0m=[35m'Data Agent - Universal ETL'[0m [36menvironment[0m=[35mdevelopment[0m
+[2m2025-12-02T14:57:57.826395Z[0m [[32m[1minfo     [0m] [1mdatabase_initialized          [0m [36mmessage[0m=[35m'All database tables created/verified'[0m
+[2m2025-12-02T14:57:57.826524Z[0m [[32m[1minfo     [0m] [1mdatabase_connected            [0m [36mconnection_string[0m=[35mlocalhost:5432/data_agent_system[0m
+[2m2025-12-02T14:57:57.826573Z[0m [[32m[1minfo     [0m] [1mconnectors_registered         [0m [36mdestination_count[0m=[35m11[0m [36mdestinations[0m=[35m['postgresql', 'mysql', 'mssql', 'oracle', 'sqlite', 'mongodb', 's3', 'snowflake', 'bigquery', 'local_file', 'singer'][0m [36msource_count[0m=[35m11[0m [36msources[0m=[35m['postgresql', 'mysql', 'mssql', 'oracle', 'sqlite', 'mongodb', 's3', 'snowflake', 'bigquery', 'local_file', 'singer'][0m
+[2m2025-12-02T14:57:57.828089Z[0m [[32m[1minfo     [0m] [1mcache_connected               [0m [36mredis_url[0m=[35mredis://localhost:6379/0[0m
+[2m2025-12-02T14:57:57.834380Z[0m [[32m[1minfo     [0m] [1mredis_available               [0m [36mconnected_clients[0m=[35m15[0m [36mmemory_used[0m=[35m1.79M[0m [36mtotal_keys[0m=[35m0[0m
+[2m2025-12-02T14:57:57.834467Z[0m [[32m[1minfo     [0m] [1mapplication_ready             [0m [36mconnectors_registered[0m=[35m{'sources': 11, 'destinations': 11}[0m [36mdatabase[0m=[35mconnected[0m [36mredis[0m=[35m{'available': True, 'memory_used': '1.79M', 'total_keys': 0}[0m
+[2m2025-12-02T14:58:05.655893Z[0m [[31m[1merror    [0m] [1mencryption_service_access_before_initialization[0m
+[2m2025-12-02T14:58:05.660029Z[0m [[31m[1merror    [0m] [1mencryption_service_access_before_initialization[0m
+[2m2025-12-02T14:58:10.497317Z[0m [[32m[1minfo     [0m] [1msystem_unlock_requested       [0m
+[2m2025-12-02T14:58:10.500802Z[0m [[32m[1minfo     [0m] [1minitialize_encryption_service_requested[0m
+[2m2025-12-02T14:58:10.501028Z[0m [[32m[1minfo     [0m] [1mencryption_unlock_requested   [0m
+[2m2025-12-02T14:58:10.501123Z[0m [[32m[1minfo     [0m] [1mdek_decrypt_requested         [0m
+[2m2025-12-02T14:58:10.570911Z[0m [[32m[1minfo     [0m] [1mdek_decrypt_completed         [0m
+[2m2025-12-02T14:58:10.571061Z[0m [[32m[1minfo     [0m] [1mencryption_service_unlocked   [0m
+[2m2025-12-02T14:58:10.571112Z[0m [[32m[1minfo     [0m] [1minitialize_encryption_service_completed[0m
+[2m2025-12-02T14:58:10.571146Z[0m [[32m[1minfo     [0m] [1msystem_unlocked_successfully  [0m
+[2m2025-12-02T14:58:10.607473Z[0m [[32m[1minfo     [0m] [1mjob_list_requested            [0m [36mlimit[0m=[35m5[0m [36mpipeline_id[0m=[35mNone[0m [36mskip[0m=[35m0[0m [36mstatus[0m=[35mNone[0m
+[2m2025-12-02T14:58:10.607998Z[0m [[32m[1minfo     [0m] [1mpipelines_list_requested      [0m [36mlimit[0m=[35m100[0m [36mskip[0m=[35m0[0m [36mstatus[0m=[35mNone[0m
+[2m2025-12-02T14:58:10.640448Z[0m [[32m[1minfo     [0m] [1mjob_list_completed            [0m [36mcount[0m=[35m1[0m
+[2m2025-12-02T14:58:10.641926Z[0m [[32m[1minfo     [0m] [1mpipeline_list_retrieved       [0m [36mcount[0m=[35m1[0m
+[2m2025-12-02T14:58:10.642181Z[0m [[32m[1minfo     [0m] [1mpipelines_listed              [0m [36mcount[0m=[35m1[0m
+[2m2025-12-02T14:58:11.658596Z[0m [[32m[1minfo     [0m] [1mjob_list_requested            [0m [36mlimit[0m=[35m5[0m [36mpipeline_id[0m=[35mNone[0m [36mskip[0m=[35m0[0m [36mstatus[0m=[35mNone[0m
+[2m2025-12-02T14:58:11.658952Z[0m [[32m[1minfo     [0m] [1mpipelines_list_requested      [0m [36mlimit[0m=[35m100[0m [36mskip[0m=[35m0[0m [36mstatus[0m=[35mNone[0m
+[2m2025-12-02T14:58:11.662572Z[0m [[32m[1minfo     [0m] [1mjob_list_completed            [0m [36mcount[0m=[35m1[0m
+[2m2025-12-02T14:58:11.663055Z[0m [[32m[1minfo     [0m] [1mpipeline_list_retrieved       [0m [36mcount[0m=[35m1[0m
+[2m2025-12-02T14:58:11.663790Z[0m [[32m[1minfo     [0m] [1mpipelines_listed              [0m [36mcount[0m=[35m1[0m
+[2m2025-12-02T14:58:13.685352Z[0m [[32m[1minfo     [0m] [1mjob_list_requested            [0m [36mlimit[0m=[35m5[0m [36mpipeline_id[0m=[35mNone[0m [36mskip[0m=[35m0[0m [36mstatus[0m=[35mNone[0m
+[2m2025-12-02T14:58:13.687914Z[0m [[32m[1minfo     [0m] [1mpipelines_list_requested      [0m [36mlimit[0m=[35m100[0m [36mskip[0m=[35m0[0m [36mstatus[0m=[35mNone[0m
+[2m2025-12-02T14:58:13.689359Z[0m [[32m[1minfo     [0m] [1mjob_list_completed            [0m [36mcount[0m=[35m1[0m
+[2m2025-12-02T14:58:13.690723Z[0m [[32m[1minfo     [0m] [1mpipeline_list_retrieved       [0m [36mcount[0m=[35m1[0m
+[2m2025-12-02T14:58:13.692398Z[0m [[32m[1minfo     [0m] [1mpipelines_listed              [0m [36mcount[0m=[35m1[0m
+[2m2025-12-02T14:58:17.713721Z[0m [[32m[1minfo     [0m] [1mjob_list_requested            [0m [36mlimit[0m=[35m5[0m [36mpipeline_id[0m=[35mNone[0m [36mskip[0m=[35m0[0m [36mstatus[0m=[35mNone[0m
+[2m2025-12-02T14:58:17.714389Z[0m [[32m[1minfo     [0m] [1mpipelines_list_requested      [0m [36mlimit[0m=[35m100[0m [36mskip[0m=[35m0[0m [36mstatus[0m=[35mNone[0m
+[2m2025-12-02T14:58:17.732522Z[0m [[32m[1minfo     [0m] [1mpipeline_list_retrieved       [0m [36mcount[0m=[35m1[0m
+[2m2025-12-02T14:58:17.733500Z[0m [[32m[1minfo     [0m] [1mjob_list_completed            [0m [36mcount[0m=[35m1[0m
+[2m2025-12-02T14:58:17.734712Z[0m [[32m[1minfo     [0m] [1mpipelines_listed              [0m [36mcount[0m=[35m1[0m
+1 change detected
+[2m2025-12-02T15:00:42.079553Z[0m [[32m[1minfo     [0m] [1mapplication_shutting_down     [0m [36mmessage[0m=[35m'Graceful shutdown initiated'[0m
+[2m2025-12-02T15:00:42.080480Z[0m [[32m[1minfo     [0m] [1mapplication_shutdown_complete [0m [36mmessage[0m=[35m'All services stopped'[0m
+4 changes detected
+[2m2025-12-02T15:00:44.100011Z[0m [[32m[1minfo     [0m] [1mapplication_starting          [0m [36mapi_version[0m=[35m/api/v1[0m [36mapp_name[0m=[35m'Data Agent - Universal ETL'[0m [36menvironment[0m=[35mdevelopment[0m
+[2m2025-12-02T15:00:44.173092Z[0m [[32m[1minfo     [0m] [1mdatabase_initialized          [0m [36mmessage[0m=[35m'All database tables created/verified'[0m
+[2m2025-12-02T15:00:44.173230Z[0m [[32m[1minfo     [0m] [1mdatabase_connected            [0m [36mconnection_string[0m=[35mlocalhost:5432/data_agent_system[0m
+[2m2025-12-02T15:00:44.173283Z[0m [[32m[1minfo     [0m] [1mconnectors_registered         [0m [36mdestination_count[0m=[35m11[0m [36mdestinations[0m=[35m['postgresql', 'mysql', 'mssql', 'oracle', 'sqlite', 'mongodb', 's3', 'snowflake', 'bigquery', 'local_file', 'singer'][0m [36msource_count[0m=[35m11[0m [36msources[0m=[35m['postgresql', 'mysql', 'mssql', 'oracle', 'sqlite', 'mongodb', 's3', 'snowflake', 'bigquery', 'local_file', 'singer'][0m
+[2m2025-12-02T15:00:44.174345Z[0m [[32m[1minfo     [0m] [1mcache_connected               [0m [36mredis_url[0m=[35mredis://localhost:6379/0[0m
+[2m2025-12-02T15:00:44.175928Z[0m [[32m[1minfo     [0m] [1mredis_available               [0m [36mconnected_clients[0m=[35m15[0m [36mmemory_used[0m=[35m1.79M[0m [36mtotal_keys[0m=[35m0[0m
+[2m2025-12-02T15:00:44.175987Z[0m [[32m[1minfo     [0m] [1mapplication_ready             [0m [36mconnectors_registered[0m=[35m{'sources': 11, 'destinations': 11}[0m [36mdatabase[0m=[35mconnected[0m [36mredis[0m=[35m{'available': True, 'memory_used': '1.79M', 'total_keys': 0}[0m
+[2m2025-12-02T15:00:49.099183Z[0m [[32m[1minfo     [0m] [1mjob_list_requested            [0m [36mlimit[0m=[35m5[0m [36mpipeline_id[0m=[35mNone[0m [36mskip[0m=[35m0[0m [36mstatus[0m=[35mNone[0m
+[2m2025-12-02T15:00:49.105788Z[0m [[32m[1minfo     [0m] [1mpipelines_list_requested      [0m [36mlimit[0m=[35m100[0m [36mskip[0m=[35m0[0m [36mstatus[0m=[35mNone[0m
+[2m2025-12-02T15:00:49.161326Z[0m [[32m[1minfo     [0m] [1mpipeline_list_retrieved       [0m [36mcount[0m=[35m1[0m
+[2m2025-12-02T15:00:49.161756Z[0m [[32m[1minfo     [0m] [1mjob_list_completed            [0m [36mcount[0m=[35m1[0m
+[2m2025-12-02T15:00:49.161877Z[0m [[32m[1minfo     [0m] [1mpipelines_listed              [0m [36mcount[0m=[35m1[0m
+[2m2025-12-02T15:00:51.212357Z[0m [[31m[1merror    [0m] [1mencryption_service_access_before_initialization[0m
+[2m2025-12-02T15:00:51.229399Z[0m [[31m[1merror    [0m] [1mencryption_service_access_before_initialization[0m
+[2m2025-12-02T15:00:58.077426Z[0m [[32m[1minfo     [0m] [1msystem_unlock_requested       [0m
+[2m2025-12-02T15:00:58.083138Z[0m [[32m[1minfo     [0m] [1minitialize_encryption_service_requested[0m
+[2m2025-12-02T15:00:58.083457Z[0m [[32m[1minfo     [0m] [1mencryption_unlock_requested   [0m
+[2m2025-12-02T15:00:58.083585Z[0m [[32m[1minfo     [0m] [1mdek_decrypt_requested         [0m
+[2m2025-12-02T15:00:58.151141Z[0m [[32m[1minfo     [0m] [1mdek_decrypt_completed         [0m
+[2m2025-12-02T15:00:58.151293Z[0m [[32m[1minfo     [0m] [1mencryption_service_unlocked   [0m
+[2m2025-12-02T15:00:58.151350Z[0m [[32m[1minfo     [0m] [1minitialize_encryption_service_completed[0m
+[2m2025-12-02T15:00:58.151390Z[0m [[32m[1minfo     [0m] [1msystem_unlocked_successfully  [0m
+[2m2025-12-02T15:00:58.227517Z[0m [[32m[1minfo     [0m] [1mjob_list_requested            [0m [36mlimit[0m=[35m5[0m [36mpipeline_id[0m=[35mNone[0m [36mskip[0m=[35m0[0m [36mstatus[0m=[35mNone[0m
+[2m2025-12-02T15:00:58.229117Z[0m [[32m[1minfo     [0m] [1mpipelines_list_requested      [0m [36mlimit[0m=[35m100[0m [36mskip[0m=[35m0[0m [36mstatus[0m=[35mNone[0m
+[2m2025-12-02T15:00:58.248137Z[0m [[32m[1minfo     [0m] [1mjob_list_completed            [0m [36mcount[0m=[35m1[0m
+[2m2025-12-02T15:00:58.248899Z[0m [[32m[1minfo     [0m] [1mpipeline_list_retrieved       [0m [36mcount[0m=[35m1[0m
+[2m2025-12-02T15:00:58.258316Z[0m [[32m[1minfo     [0m] [1mpipelines_listed              [0m [36mcount[0m=[35m1[0m
+[2m2025-12-02T15:01:08.894096Z[0m [[32m[1minfo     [0m] [1mpostgres_connected            [0m [36mdatabase[0m=[35mdata_agent_system[0m [36mhost[0m=[35mlocalhost[0m
+2 changes detected
+2 changes detected
+[2m2025-12-02T15:01:18.935199Z[0m [[32m[1minfo     [0m] [1mpostgres_connected            [0m [36mdatabase[0m=[35mdata_agent_system[0m [36mhost[0m=[35mlocalhost[0m
+[2m2025-12-02T15:01:27.943973Z[0m [[32m[1minfo     [0m] [1mtransformer_list_retrieved    [0m [36mcount[0m=[35m0[0m

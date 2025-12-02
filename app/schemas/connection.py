@@ -1,5 +1,15 @@
+"""
+Connection schemas (clean, modern, connector-aware)
+
+This module performs:
+✓ Strong validation for connection config
+✓ Automatic routing to correct Pydantic config class
+✓ Separation of create/update/DB/output schemas
+✓ Full compatibility with ConnectorFactory + encrypted configs
+"""
+
 from datetime import datetime
-from typing import Any
+from typing import Any, Dict, Type
 
 from pydantic import BaseModel, model_validator
 
@@ -19,7 +29,28 @@ from app.schemas.connector_configs import (
     SingerDestinationConfig,
 )
 
+# ================================================================
+# CONNECTOR CONFIG REGISTRY
+# ================================================================
+# Maps connector_type → (source_config_cls, destination_config_cls)
+CONNECTOR_CONFIG_MAP: Dict[ConnectorType, tuple[Type[BaseModel], Type[BaseModel] | None]] = {
+    ConnectorType.POSTGRESQL: (PostgresConfig, None),
+    ConnectorType.MYSQL: (MySQLConfig, None),
+    ConnectorType.MSSQL: (MSSQLConfig, None),
+    ConnectorType.ORACLE: (OracleConfig, None),
+    ConnectorType.SQLITE: (SQLiteConfig, None),
+    ConnectorType.MONGODB: (MongoDBConfig, None),
+    ConnectorType.SNOWFLAKE: (SnowflakeConfig, None),
+    ConnectorType.BIGQUERY: (BigQueryConfig, None),
+    ConnectorType.S3: (None, S3Config),
+    ConnectorType.LOCAL_FILE: (FileSystemConfig, FileSystemConfig),
+    ConnectorType.SINGER: (SingerSourceConfig, SingerDestinationConfig),
+}
 
+
+# ================================================================
+# BASE MODELS
+# ================================================================
 class ConnectionBase(BaseModel):
     name: str
     connector_type: ConnectorType
@@ -27,53 +58,61 @@ class ConnectionBase(BaseModel):
     is_source: bool = True
 
 
+# ================================================================
+# CREATE
+# ================================================================
 class ConnectionCreate(ConnectionBase):
-    config: dict[str, Any]  # Raw config from user (host, password, etc.)
+    """
+    User submits:  connector_type + is_source + config
+    We must:
+    ✓ Select correct Config class
+    ✓ Validate config immediately
+    """
+
+    config: dict[str, Any]
 
     @model_validator(mode="after")
-    def validate_config(self) -> "ConnectionCreate":
-        """Validate config based on connector_type"""
-        connector_type = self.connector_type
-        config = self.config
+    def validate_config(self):
+        t = self.connector_type
 
-        if connector_type == ConnectorType.POSTGRESQL:
-            PostgresConfig(**config)
-        elif connector_type == ConnectorType.MYSQL:
-            MySQLConfig(**config)
-        elif connector_type == ConnectorType.MSSQL:
-            MSSQLConfig(**config)
-        elif connector_type == ConnectorType.ORACLE:
-            OracleConfig(**config)
-        elif connector_type == ConnectorType.SQLITE:
-            SQLiteConfig(**config)
-        elif connector_type == ConnectorType.MONGODB:
-            MongoDBConfig(**config)
-        elif connector_type == ConnectorType.SNOWFLAKE:
-            SnowflakeConfig(**config)
-        elif connector_type == ConnectorType.BIGQUERY:
-            BigQueryConfig(**config)
-        elif connector_type == ConnectorType.S3:
-            S3Config(**config)
-        elif connector_type == ConnectorType.LOCAL_FILE:
-            FileSystemConfig(**config)
-        elif connector_type == ConnectorType.SINGER:
-            if self.is_source:
-                SingerSourceConfig(**config)
-            else:
-                SingerDestinationConfig(**config)
-        
+        if t not in CONNECTOR_CONFIG_MAP:
+            raise ValueError(f"Unsupported connector type: {t}")
+
+        source_cls, dest_cls = CONNECTOR_CONFIG_MAP[t]
+
+        if self.is_source:
+            cfg_cls = source_cls
+        else:
+            cfg_cls = dest_cls or source_cls   # some connectors share config
+
+        if cfg_cls is None:
+            raise ValueError(f"Connector '{t}' does not support destination mode")
+
+        # Validate using correct Pydantic model
+        try:
+            cfg_cls(**self.config)
+        except Exception as e:
+            raise ValueError(f"Invalid config for {t}: {str(e)}") from e
+
         return self
 
 
+# ================================================================
+# UPDATE (partial)
+# ================================================================
 class ConnectionUpdate(BaseModel):
+    """
+    Partial update. We cannot fully validate config here, because
+    connector_type may not be provided and must come from DB.
+    """
     name: str | None = None
     description: str | None = None
     config: dict[str, Any] | None = None
-    
-    # Note: We cannot strictly validate config here because we don't know the 
-    # connector_type of the existing connection without a DB lookup.
 
 
+# ================================================================
+# DB FACING
+# ================================================================
 class ConnectionInDBBase(ConnectionBase):
     id: int
     last_test_at: datetime | None = None
@@ -90,6 +129,9 @@ class Connection(ConnectionInDBBase):
     pass
 
 
+# ================================================================
+# RESPONSE MODELS
+# ================================================================
 class ConnectionConfigResponse(BaseModel):
     connection_id: int
     connector_type: str

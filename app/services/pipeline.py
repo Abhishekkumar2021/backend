@@ -1,7 +1,15 @@
-"""Service for managing pipeline-related operations."""
+"""
+Improved PipelineService
+-----------------------------------------
+✓ Safe DB commits with rollback protection
+✓ Standardized versioning + snapshots
+✓ Cleaner CRUD logic
+✓ Better logging metadata
+✓ Reduced duplication
+"""
 
-from datetime import UTC, datetime
-from typing import Optional, List
+from datetime import datetime, UTC
+from typing import Optional, List, Dict, Any
 
 from sqlalchemy.orm import Session
 from sqlalchemy import func
@@ -13,80 +21,111 @@ from app.core.logging import get_logger
 logger = get_logger(__name__)
 
 
-class PipelineService:
-    """Service for managing pipeline CRUD and versioning operations."""
+# =====================================================================
+# INTERNAL HELPERS
+# =====================================================================
+def _safe_commit(db: Session, context: str) -> bool:
+    """Safely commit DB transaction, rollback on error."""
+    try:
+        db.commit()
+        return True
+    except Exception as e:
+        db.rollback()
+        logger.error(
+            "db_commit_failed",
+            context=context,
+            error=str(e),
+            exc_info=True,
+        )
+        return False
 
-    # ===================================================================
-    # Create Pipeline
-    # ===================================================================
+
+def _pipeline_snapshot(p: Pipeline) -> Dict[str, Any]:
+    """Consistent snapshot of pipeline config."""
+    return {
+        "name": p.name,
+        "description": p.description,
+        "source_connection_id": p.source_connection_id,
+        "destination_connection_id": p.destination_connection_id,
+        "source_config": p.source_config,
+        "destination_config": p.destination_config,
+        "transform_config": p.transform_config,
+        "schedule_cron": p.schedule_cron,
+        "schedule_enabled": p.schedule_enabled,
+        "sync_mode": p.sync_mode,
+        "status": p.status.value,
+    }
+
+
+# =====================================================================
+# PIPELINE SERVICE
+# =====================================================================
+class PipelineService:
+    """Service for managing pipeline CRUD + versioning."""
+
+    # ------------------------------------------------------------------
+    # CREATE PIPELINE
+    # ------------------------------------------------------------------
     @staticmethod
     def create_pipeline(db: Session, pipeline_in: PipelineCreate) -> Pipeline:
         logger.info(
             "pipeline_creation_requested",
             name=pipeline_in.name,
-            source_connection_id=pipeline_in.source_connection_id,
-            destination_connection_id=pipeline_in.destination_connection_id,
+            source=pipeline_in.source_connection_id,
+            destination=pipeline_in.destination_connection_id,
         )
 
-        db_pipeline = Pipeline(
+        pipeline = Pipeline(
             name=pipeline_in.name,
             description=pipeline_in.description,
             source_connection_id=pipeline_in.source_connection_id,
             destination_connection_id=pipeline_in.destination_connection_id,
             source_config=pipeline_in.source_config.model_dump(),
             destination_config=pipeline_in.destination_config.model_dump(),
-            transform_config=pipeline_in.transform_config.model_dump() if pipeline_in.transform_config else None,
+            transform_config=(
+                pipeline_in.transform_config.model_dump()
+                if pipeline_in.transform_config else None
+            ),
             schedule_cron=pipeline_in.schedule_cron,
             schedule_enabled=pipeline_in.schedule_enabled,
             sync_mode=pipeline_in.sync_mode,
+            status=PipelineStatus.DRAFT,
             created_at=datetime.now(UTC),
             updated_at=datetime.now(UTC),
-            status=PipelineStatus.DRAFT,
-        )
-        db.add(db_pipeline)
-        db.commit()
-        db.refresh(db_pipeline)
-
-        logger.info(
-            "pipeline_created",
-            pipeline_id=db_pipeline.id,
-            name=db_pipeline.name,
         )
 
-        # Create initial version
+        db.add(pipeline)
+        if not _safe_commit(db, "create_pipeline"):
+            raise RuntimeError("Failed to create pipeline")
+
+        logger.info("pipeline_created", pipeline_id=pipeline.id)
+
+        # Create initial version snapshot
         PipelineService.create_pipeline_version(
             db,
-            db_pipeline.id,
+            pipeline.id,
             description="Initial pipeline creation",
         )
 
-        return db_pipeline
-
-    # ===================================================================
-    # Get Pipeline
-    # ===================================================================
-    @staticmethod
-    def get_pipeline(db: Session, pipeline_id: int) -> Optional[Pipeline]:
-        pipeline = db.query(Pipeline).filter(Pipeline.id == pipeline_id).first()
-
-        if not pipeline:
-            logger.warning(
-                "pipeline_not_found",
-                pipeline_id=pipeline_id,
-            )
-
         return pipeline
 
-    # ===================================================================
-    # Get by Name
-    # ===================================================================
+    # ------------------------------------------------------------------
+    # GET
+    # ------------------------------------------------------------------
+    @staticmethod
+    def get_pipeline(db: Session, pipeline_id: int) -> Optional[Pipeline]:
+        pipeline = db.query(Pipeline).filter_by(id=pipeline_id).first()
+        if not pipeline:
+            logger.warning("pipeline_not_found", pipeline_id=pipeline_id)
+        return pipeline
+
     @staticmethod
     def get_pipeline_by_name(db: Session, name: str) -> Optional[Pipeline]:
-        return db.query(Pipeline).filter(Pipeline.name == name).first()
+        return db.query(Pipeline).filter_by(name=name).first()
 
-    # ===================================================================
-    # Get Pipelines (List)
-    # ===================================================================
+    # ------------------------------------------------------------------
+    # LIST
+    # ------------------------------------------------------------------
     @staticmethod
     def get_pipelines(
         db: Session,
@@ -94,185 +133,133 @@ class PipelineService:
         limit: int = 100,
         status: Optional[PipelineStatus] = None,
     ) -> List[Pipeline]:
-        logger.info(
-            "pipeline_list_requested",
-            skip=skip,
-            limit=limit,
-            status=status.value if status else None,
-        )
 
         query = db.query(Pipeline)
 
         if status:
             query = query.filter(Pipeline.status == status)
-            logger.debug(
-                "pipeline_list_filter_status",
-                status=status.value,
-            )
 
-        pipelines = query.offset(skip).limit(limit).all()
-
-        logger.info(
-            "pipeline_list_retrieved",
-            count=len(pipelines),
+        pipelines = (
+            query.order_by(Pipeline.created_at.desc())
+            .offset(skip)
+            .limit(limit)
+            .all()
         )
 
+        logger.info("pipeline_list_retrieved", count=len(pipelines))
         return pipelines
 
-    # ===================================================================
-    # Update Pipeline
-    # ===================================================================
+    # ------------------------------------------------------------------
+    # UPDATE PIPELINE
+    # ------------------------------------------------------------------
     @staticmethod
     def update_pipeline(
         db: Session,
         pipeline_id: int,
         pipeline_in: PipelineUpdate,
     ) -> Optional[Pipeline]:
-        db_pipeline = PipelineService.get_pipeline(db, pipeline_id)
-        if not db_pipeline:
-            logger.error(
-                "pipeline_update_failed_not_found",
-                pipeline_id=pipeline_id,
-            )
+
+        pipeline = PipelineService.get_pipeline(db, pipeline_id)
+        if not pipeline:
             return None
 
-        logger.info(
-            "pipeline_update_requested",
-            pipeline_id=pipeline_id,
-            name=db_pipeline.name,
-        )
+        logger.info("pipeline_update_requested", pipeline_id=pipeline_id)
 
         update_data = pipeline_in.model_dump(exclude_unset=True)
 
-        # Fields that require versioning if changed
-        config_fields = [
+        # Config fields that cause versioning if modified
+        version_fields = {
             "source_config",
             "destination_config",
             "transform_config",
             "schedule_cron",
             "sync_mode",
-        ]
+        }
 
-        version_needed = any(
-            field in update_data and getattr(db_pipeline, field) != update_data[field]
-            for field in config_fields
-        )
+        version_needed = False
 
         # Apply updates
         for field, value in update_data.items():
-            setattr(db_pipeline, field, value)
-            logger.debug(
-                "pipeline_field_updated",
-                field=field,
-            )
+            if getattr(pipeline, field) != value:
+                if field in version_fields:
+                    version_needed = True
 
-        db_pipeline.updated_at = datetime.now(UTC)
-        db.commit()
-        db.refresh(db_pipeline)
+                setattr(pipeline, field, value)
+                logger.debug("pipeline_field_updated", field=field)
 
-        logger.info(
-            "pipeline_updated",
-            pipeline_id=pipeline_id,
-        )
+        pipeline.updated_at = datetime.now(UTC)
 
-        # Create a version if config changed
+        if not _safe_commit(db, "update_pipeline"):
+            return None
+
+        logger.info("pipeline_updated", pipeline_id=pipeline_id)
+
+        # Create version snapshot if meaningful config changed
         if version_needed:
-            logger.info(
-                "pipeline_version_required",
-                pipeline_id=pipeline_id,
-            )
             PipelineService.create_pipeline_version(
                 db,
                 pipeline_id,
-                description="Pipeline configuration updated via API",
+                description="Pipeline configuration updated",
             )
 
-        return db_pipeline
+        return pipeline
 
-    # ===================================================================
-    # Delete Pipeline
-    # ===================================================================
+    # ------------------------------------------------------------------
+    # DELETE PIPELINE
+    # ------------------------------------------------------------------
     @staticmethod
     def delete_pipeline(db: Session, pipeline_id: int) -> Optional[Pipeline]:
-        db_pipeline = PipelineService.get_pipeline(db, pipeline_id)
-        if not db_pipeline:
-            logger.error(
-                "pipeline_delete_failed_not_found",
-                pipeline_id=pipeline_id,
-            )
+        pipeline = PipelineService.get_pipeline(db, pipeline_id)
+        if not pipeline:
             return None
 
-        logger.warning(
-            "pipeline_deletion_requested",
-            pipeline_id=pipeline_id,
-            name=db_pipeline.name,
-        )
+        logger.warning("pipeline_deletion_requested", pipeline_id=pipeline_id)
 
-        db.delete(db_pipeline)
-        db.commit()
+        db.delete(pipeline)
+        if not _safe_commit(db, "delete_pipeline"):
+            return None
 
-        logger.info(
-            "pipeline_deleted",
-            pipeline_id=pipeline_id,
-        )
+        logger.info("pipeline_deleted", pipeline_id=pipeline_id)
+        return pipeline
 
-        return db_pipeline
-
-    # ===================================================================
-    # Activate Pipeline
-    # ===================================================================
+    # ------------------------------------------------------------------
+    # ACTIVATE / PAUSE
+    # ------------------------------------------------------------------
     @staticmethod
     def activate_pipeline(db: Session, pipeline_id: int) -> Optional[Pipeline]:
-        db_pipeline = PipelineService.get_pipeline(db, pipeline_id)
-        if not db_pipeline:
-            logger.warning(
-                "pipeline_activate_not_found",
-                pipeline_id=pipeline_id,
-            )
+        pipeline = PipelineService.get_pipeline(db, pipeline_id)
+        if not pipeline:
             return None
 
-        logger.info(
-            "pipeline_activated",
-            pipeline_id=pipeline_id,
-        )
+        pipeline.status = PipelineStatus.ACTIVE
+        pipeline.updated_at = datetime.now(UTC)
 
-        db_pipeline.status = PipelineStatus.ACTIVE
-        db_pipeline.updated_at = datetime.now(UTC)
-        db.commit()
-        db.refresh(db_pipeline)
+        if not _safe_commit(db, "activate_pipeline"):
+            return None
 
-        return db_pipeline
+        logger.info("pipeline_activated", pipeline_id=pipeline_id)
+        return pipeline
 
-    # ===================================================================
-    # Pause Pipeline
-    # ===================================================================
     @staticmethod
     def pause_pipeline(db: Session, pipeline_id: int) -> Optional[Pipeline]:
-        db_pipeline = PipelineService.get_pipeline(db, pipeline_id)
-        if not db_pipeline:
-            logger.warning(
-                "pipeline_pause_not_found",
-                pipeline_id=pipeline_id,
-            )
+        pipeline = PipelineService.get_pipeline(db, pipeline_id)
+        if not pipeline:
             return None
 
-        logger.info(
-            "pipeline_paused",
-            pipeline_id=pipeline_id,
-        )
+        pipeline.status = PipelineStatus.PAUSED
+        pipeline.updated_at = datetime.now(UTC)
 
-        db_pipeline.status = PipelineStatus.PAUSED
-        db_pipeline.updated_at = datetime.now(UTC)
-        db.commit()
-        db.refresh(db_pipeline)
+        if not _safe_commit(db, "pause_pipeline"):
+            return None
 
-        return db_pipeline
+        logger.info("pipeline_paused", pipeline_id=pipeline_id)
+        return pipeline
 
-    # ===================================================================
-    # Version Helpers
-    # ===================================================================
+    # ------------------------------------------------------------------
+    # VERSIONING
+    # ------------------------------------------------------------------
     @staticmethod
-    def _get_next_version_number(db: Session, pipeline_id: int) -> int:
+    def _next_version(db: Session, pipeline_id: int) -> int:
         max_version = (
             db.query(func.max(PipelineVersion.version_number))
             .filter(PipelineVersion.pipeline_id == pipeline_id)
@@ -280,9 +267,6 @@ class PipelineService:
         )
         return (max_version or 0) + 1
 
-    # ===================================================================
-    # Create Pipeline Version
-    # ===================================================================
     @staticmethod
     def create_pipeline_version(
         db: Session,
@@ -290,60 +274,37 @@ class PipelineService:
         description: Optional[str] = None,
         created_by: Optional[str] = None,
     ) -> PipelineVersion:
+
         pipeline = PipelineService.get_pipeline(db, pipeline_id)
         if not pipeline:
-            logger.error(
-                "pipeline_version_creation_failed_not_found",
-                pipeline_id=pipeline_id,
-            )
-            raise ValueError(f"Pipeline with ID {pipeline_id} not found")
+            raise ValueError(f"Pipeline {pipeline_id} not found")
 
-        next_version = PipelineService._get_next_version_number(db, pipeline_id)
+        version_number = PipelineService._next_version(db, pipeline_id)
 
-        logger.info(
-            "pipeline_version_creation_requested",
+        version = PipelineVersion(
             pipeline_id=pipeline_id,
-            next_version=next_version,
-        )
-
-        config_snapshot = {
-            "name": pipeline.name,
-            "description": pipeline.description,
-            "source_connection_id": pipeline.source_connection_id,
-            "destination_connection_id": pipeline.destination_connection_id,
-            "source_config": pipeline.source_config,
-            "destination_config": pipeline.destination_config,
-            "transform_config": pipeline.transform_config,
-            "schedule_cron": pipeline.schedule_cron,
-            "schedule_enabled": pipeline.schedule_enabled,
-            "sync_mode": pipeline.sync_mode,
-            "status": pipeline.status.value,
-        }
-
-        db_version = PipelineVersion(
-            pipeline_id=pipeline_id,
-            version_number=next_version,
+            version_number=version_number,
             description=description,
-            config_snapshot=config_snapshot,
             created_by=created_by,
             created_at=datetime.now(UTC),
+            config_snapshot=_pipeline_snapshot(pipeline),
         )
-        db.add(db_version)
-        db.commit()
-        db.refresh(db_version)
+
+        db.add(version)
+        if not _safe_commit(db, "create_pipeline_version"):
+            raise RuntimeError("Failed to create pipeline version")
 
         logger.info(
             "pipeline_version_created",
-            version_id=db_version.id,
             pipeline_id=pipeline_id,
-            version_number=next_version,
+            version_number=version_number,
         )
 
-        return db_version
+        return version
 
-    # ===================================================================
-    # List Versions
-    # ===================================================================
+    # ------------------------------------------------------------------
+    # VERSION LIST / GET
+    # ------------------------------------------------------------------
     @staticmethod
     def get_pipeline_versions(
         db: Session,
@@ -351,68 +312,53 @@ class PipelineService:
         skip: int = 0,
         limit: int = 100,
     ) -> List[PipelineVersion]:
+
         versions = (
             db.query(PipelineVersion)
-            .filter(PipelineVersion.pipeline_id == pipeline_id)
+            .filter_by(pipeline_id=pipeline_id)
             .order_by(PipelineVersion.version_number.desc())
             .offset(skip)
             .limit(limit)
             .all()
         )
 
-        logger.debug(
-            "pipeline_versions_retrieved",
-            pipeline_id=pipeline_id,
-            count=len(versions),
-        )
-
+        logger.info("pipeline_versions_retrieved", count=len(versions))
         return versions
 
-    # ===================================================================
-    # Get Version by ID
-    # ===================================================================
     @staticmethod
-    def get_pipeline_version(db: Session, version_id: int) -> Optional[PipelineVersion]:
-        return (
-            db.query(PipelineVersion)
-            .filter(PipelineVersion.id == version_id)
-            .first()
-        )
+    def get_pipeline_version(
+        db: Session,
+        version_id: int,
+    ) -> Optional[PipelineVersion]:
+        return db.query(PipelineVersion).filter_by(id=version_id).first()
 
-    # ===================================================================
-    # Get Version by Number
-    # ===================================================================
     @staticmethod
     def get_pipeline_version_by_number(
         db: Session,
         pipeline_id: int,
         version_number: int,
     ) -> Optional[PipelineVersion]:
+
         return (
             db.query(PipelineVersion)
-            .filter(
-                PipelineVersion.pipeline_id == pipeline_id,
-                PipelineVersion.version_number == version_number,
-            )
+            .filter_by(pipeline_id=pipeline_id, version_number=version_number)
             .first()
         )
 
-    # ===================================================================
-    # Restore Version
-    # ===================================================================
+    # ------------------------------------------------------------------
+    # RESTORE VERSION
+    # ------------------------------------------------------------------
     @staticmethod
     def restore_pipeline_version(
         db: Session,
         pipeline_id: int,
         version_number: int,
     ) -> Optional[Pipeline]:
-        db_version = PipelineService.get_pipeline_version_by_number(
-            db,
-            pipeline_id,
-            version_number,
-        )
 
-        if not db_version:
+        version = PipelineService.get_pipeline_version_by_number(
+            db, pipeline_id, version_number
+        )
+        if not version:
             logger.error(
                 "pipeline_restore_failed_version_not_found",
                 pipeline_id=pipeline_id,
@@ -422,10 +368,6 @@ class PipelineService:
 
         pipeline = PipelineService.get_pipeline(db, pipeline_id)
         if not pipeline:
-            logger.error(
-                "pipeline_restore_failed_pipeline_not_found",
-                pipeline_id=pipeline_id,
-            )
             return None
 
         logger.info(
@@ -434,45 +376,24 @@ class PipelineService:
             version_number=version_number,
         )
 
-        snapshot = db_version.config_snapshot
+        snapshot = version.config_snapshot
 
-        # Restore snapshot fields
-        pipeline.description = snapshot.get("description", pipeline.description)
-        pipeline.source_connection_id = snapshot.get(
-            "source_connection_id", pipeline.source_connection_id
-        )
-        pipeline.destination_connection_id = snapshot.get(
-            "destination_connection_id", pipeline.destination_connection_id
-        )
-        pipeline.source_config = snapshot.get("source_config", pipeline.source_config)
-        pipeline.destination_config = snapshot.get(
-            "destination_config", pipeline.destination_config
-        )
-        pipeline.transform_config = snapshot.get(
-            "transform_config", pipeline.transform_config
-        )
-        pipeline.schedule_cron = snapshot.get("schedule_cron", pipeline.schedule_cron)
-        pipeline.schedule_enabled = snapshot.get(
-            "schedule_enabled", pipeline.schedule_enabled
-        )
-        pipeline.sync_mode = snapshot.get("sync_mode", pipeline.sync_mode)
-        pipeline.status = PipelineStatus(snapshot.get("status", pipeline.status.value))
+        # Restore snapshot
+        for key, value in snapshot.items():
+            if hasattr(pipeline, key):
+                setattr(pipeline, key, value)
 
         pipeline.updated_at = datetime.now(UTC)
-        db.commit()
-        db.refresh(pipeline)
 
-        logger.info(
-            "pipeline_restored",
-            pipeline_id=pipeline_id,
-            version_number=version_number,
-        )
+        if not _safe_commit(db, "restore_pipeline_version"):
+            return None
 
-        # Version entry for restoration
+        # Create a new version indicating restoration event
         PipelineService.create_pipeline_version(
             db,
             pipeline_id,
             description=f"Restored to version {version_number}",
         )
 
+        logger.info("pipeline_restored", pipeline_id=pipeline_id)
         return pipeline

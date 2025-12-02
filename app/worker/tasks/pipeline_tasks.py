@@ -1,600 +1,447 @@
-"""Pipeline execution tasks for Celery workers.
+"""
+Celery Task — Execute Pipeline Run (Clean & Modern)
+--------------------------------------------------
 
-Handles background job execution, connector initialization, and ETL processing.
+Responsibilities:
+- Unlock encryption
+- Load Job & Pipeline
+- Create PipelineRun (with run_number)
+- Build connectors + processors
+- Run universal PipelineEngine (operator-aware)
+- Persist OperatorRuns & Logs via DBCallbacks
+- Update PipelineRun result
+- Update Job
+- Save incremental state
+- Trigger alerts
 """
 
-
+from __future__ import annotations
 from datetime import datetime, UTC
-from typing import Optional, Dict, Any, Tuple
+from typing import Any, Dict, Optional, Tuple, List
+
 from sqlalchemy.orm import Session
-from app.connectors.base import ConnectorFactory
-from app.connectors.base import SourceConnector, DestinationConnector
+
+from app.core.logging import get_logger, bind_trace_ids, clear_trace_ids
 from app.core.database import SessionLocal
-from app.core.logging import get_logger
-from app.models.database import Pipeline, SystemConfig, PipelineState, Transformer
-from app.models.enums import JobStatus
-from app.pipeline.engine import PipelineEngine, PipelineResult
-from app.pipeline.processors.base import BaseProcessor
-from app.pipeline.processors.registry import get_processor_class
-from app.services.alert import AlertService
-from app.services.encryption import get_encryption_service, initialize_encryption_service
-from app.services.job import JobService
-from app.worker.app import celery_app
 from app.core.config import settings
+from app.models.enums import JobStatus, PipelineRunStatus
+from app.models.database import (
+    Pipeline,
+    PipelineRun,
+    PipelineState,
+    SystemConfig,
+    Transformer,
+)
+from app.connectors.base import ConnectorFactory, SourceConnector, DestinationConnector
+from app.pipeline.engine import PipelineEngine, PipelineResult
+from app.pipeline.pipeline_callbacks import DBCallbacks
+from app.pipeline.processors.registry import get_processor_class
+from app.pipeline.processors.base import BaseProcessor
+
+from app.services.job import JobService
+from app.services.alert import AlertService
+from app.services.encryption import (
+    get_encryption_service,
+    initialize_encryption_service,
+)
+
+from app.worker.app import celery_app
 
 logger = get_logger(__name__)
 
 
+# ---------------------------------------------------------------------------
+# MAIN TASK
+# ---------------------------------------------------------------------------
 @celery_app.task(
-    name="app.worker.tasks.pipeline_tasks.execute_pipeline",
+    name="pipeline.execute",
     bind=True,
     max_retries=3,
     default_retry_delay=60,
 )
 def execute_pipeline(self, job_id: int) -> Dict[str, Any]:
-    """Execute a data pipeline job.
-    
-    This is the main Celery task that orchestrates pipeline execution:
-    1. Initialize encryption service
-    2. Load pipeline configuration
-    3. Create source and destination connectors
-    4. Execute pipeline with processors
-    5. Update job status and metrics
-    
-    Args:
-        self: Celery task instance (bound)
-        job_id: ID of the job record to execute
-        
-    Returns:
-        Dictionary with execution result
-        
-    Example:
-        >>> result = execute_pipeline.delay(job_id=123)
-        >>> print(result.get())
-        {"status": "success", "records_written": 1000}
     """
-    logger.info(
-        "pipeline_job_started",
-        job_id=job_id,
-        task_id=self.request.id,
-    )
-    
-    db = SessionLocal()
-    pipeline = None
-    
+    Celery task entrypoint to execute a pipeline run.
+    Returns a serializable dict summarizing the run result.
+    """
+    task_id = self.request.id
+    bind_trace_ids(task_id=task_id, job_id=job_id)
+    logger.info("pipeline_job_started", job_id=job_id)
+
+    db: Session = SessionLocal()
+    pipeline: Optional[Pipeline] = None
+    pipeline_run: Optional[PipelineRun] = None
+    source: Optional[SourceConnector] = None
+    destination: Optional[DestinationConnector] = None
+
     try:
-        # Step 1: Initialize encryption
-        master_password = _get_master_password()
-        if not _initialize_encryption(db, job_id, master_password):
-            return {"status": "failed", "error": "Encryption initialization failed"}
-        
-        # Step 2: Load job and pipeline
+        # ------------------------------------------------------------------
+        # 1. Validate master password & init encryption
+        # ------------------------------------------------------------------
+        settings.validate_master_password()
+        if not _init_encryption(db, job_id):
+            return _failed_response("Encryption initialization failed")
+
+        # ------------------------------------------------------------------
+        # 2. Load job & pipeline
+        # ------------------------------------------------------------------
         job = JobService.get_job(db, job_id)
         if not job:
-            logger.error("job_not_found", job_id=job_id)
-            return {"status": "failed", "error": "Job not found"}
-        
-        pipeline = db.query(Pipeline).filter(Pipeline.id == job.pipeline_id).first()
+            return _failed_response("Job not found")
+
+        pipeline = db.query(Pipeline).filter_by(id=job.pipeline_id).first()
         if not pipeline:
-            error_msg = "Pipeline not found"
-            logger.error("pipeline_not_found", job_id=job_id, pipeline_id=job.pipeline_id)
-            JobService.update_job_status(db, job_id, JobStatus.FAILED, error_message=error_msg)
-            return {"status": "failed", "error": error_msg}
-        
-        # Step 3: Update job status to RUNNING
+            JobService.update_job_status(db, job_id, JobStatus.FAILED, "Pipeline not found")
+            return _failed_response("Pipeline not found")
+
         JobService.update_job_status(db, job_id, JobStatus.RUNNING)
+        logger.info("pipeline_execution_started", pipeline_id=pipeline.id, job_id=job_id)
+
+        # ------------------------------------------------------------------
+        # 3. Create PipelineRun
+        # ------------------------------------------------------------------
+        pipeline_run = _create_pipeline_run(db, pipeline, job_id)
+        bind_trace_ids(pipeline_run_id=pipeline_run.id, pipeline_id=pipeline.id)
+
+        # ------------------------------------------------------------------
+        # 4. Build connectors
+        # ------------------------------------------------------------------
+        source, destination = _create_connectors(db, pipeline)
+        if source is None or destination is None:
+            raise RuntimeError("Failed to instantiate source or destination connector")
+
+        # ------------------------------------------------------------------
+        # 5. Build processors
+        # ------------------------------------------------------------------
+        processors = _build_processors(db, pipeline)
+        if processors is None:
+            raise RuntimeError("Processor initialization failed")
+
+        # ------------------------------------------------------------------
+        # 6. Load incremental state (if any)
+        # ------------------------------------------------------------------
+        state_dict = _load_state(db, pipeline)
+
+        # ------------------------------------------------------------------
+        # 7. Prepare callbacks, engine and run
+        # ------------------------------------------------------------------
+        callbacks = DBCallbacks(db, pipeline_run)
+        engine = PipelineEngine(
+            source=source,
+            destination=destination,
+            processors=processors,
+            callbacks=callbacks,
+        )
+
+        # Let connectors decide stream/query semantics
+        stream = None
+        query = None
+        try:
+            stream = source.get_stream_identifier(pipeline.source_config)
+        except Exception:
+            # connector may not implement stream semantics; proceed
+            stream = None
+
+        try:
+            query = source.get_query(pipeline.source_config)
+        except Exception:
+            query = None
+
+        logger.info("pipeline_engine_invoking", pipeline_id=pipeline.id, pipeline_run_id=pipeline_run.id)
+
+        result: PipelineResult = engine.run(stream=stream, state=state_dict, query=query)
+
+        # ------------------------------------------------------------------
+        # 8. Handle result (success / failure), persist state/alerts/job updates
+        # ------------------------------------------------------------------
+        if result.status == "success":
+            _on_success(db, pipeline, pipeline_run, result, job_id)
+        else:
+            _on_failure(db, pipeline, pipeline_run, result, job_id)
+
+        return result.to_dict()
+
+    except Exception as exc:
+        # Generic failure handling
+        logger.exception("pipeline_job_failed_unexpected", error=str(exc))
+        if pipeline_run:
+            try:
+                pipeline_run.status = PipelineRunStatus.FAILED
+                pipeline_run.error_message = str(exc)
+                pipeline_run.completed_at = datetime.now(UTC)
+                db.commit()
+            except Exception:
+                db.rollback()
+
+        JobService.update_job_status(db, job_id, JobStatus.FAILED, error_message=str(exc))
+        if pipeline:
+            try:
+                AlertService.trigger_job_failure_alert(db, job_id, pipeline.id, str(exc))
+            except Exception:
+                logger.exception("alert_trigger_failed", pipeline_id=(pipeline.id if pipeline else None))
+
+        return _failed_response(str(exc))
+
+    finally:
+        # ensure connectors are closed
+        try:
+            if source:
+                try:
+                    source.disconnect()
+                except Exception:
+                    logger.debug("error_closing_source_connector", exc_info=True)
+            if destination:
+                try:
+                    destination.disconnect()
+                except Exception:
+                    logger.debug("error_closing_destination_connector", exc_info=True)
+        finally:
+            clear_trace_ids()
+            db.close()
+
+
+# ---------------------------------------------------------------------------
+# ENCRYPTION INITIALIZATION
+# ---------------------------------------------------------------------------
+def _init_encryption(db: Session, job_id: int) -> bool:
+    try:
+        salt = db.query(SystemConfig).filter_by(key="dek_salt").first()
+        dek = db.query(SystemConfig).filter_by(key="encrypted_dek").first()
+
+        if not salt or not dek:
+            JobService.update_job_status(db, job_id, JobStatus.FAILED, "System not initialized")
+            return False
+
+        initialize_encryption_service(dek.value, settings.MASTER_PASSWORD, salt.value)
+        return True
+
+    except Exception as e:
+        logger.exception("encryption_init_failed", error=str(e))
+        return False
+
+
+# ---------------------------------------------------------------------------
+# PIPELINE RUN CREATION
+# ---------------------------------------------------------------------------
+def _create_pipeline_run(db: Session, pipeline: Pipeline, job_id: int) -> PipelineRun:
+    last = (
+        db.query(PipelineRun.run_number)
+        .filter_by(pipeline_id=pipeline.id)
+        .order_by(PipelineRun.run_number.desc())
+        .first()
+    )
+    run_number = (last[0] + 1) if last else 1
+
+    run = PipelineRun(
+        pipeline_id=pipeline.id,
+        job_id=job_id,
+        run_number=run_number,
+        status=PipelineRunStatus.RUNNING,
+        started_at=datetime.now(UTC),
+    )
+    db.add(run)
+    db.commit()
+    logger.info("pipeline_run_created", pipeline_run_id=run.id, run_number=run_number)
+    return run
+
+
+# ---------------------------------------------------------------------------
+# CONNECTORS
+# ---------------------------------------------------------------------------
+def _create_connectors(db: Session, pipeline: Pipeline) -> Tuple[Optional[SourceConnector], Optional[DestinationConnector]]:
+    try:
+        enc = get_encryption_service()
+
+        # Source connector config merge: decrypted connection config + pipeline overrides
+        src_conn = pipeline.source_connection
+        src_cfg = enc.decrypt_config(src_conn.config_encrypted)
+        final_src = {**src_cfg, **(pipeline.source_config or {})}
+        source = ConnectorFactory.create_source(src_conn.connector_type.value, final_src)
+
+        # Destination connector
+        dst_conn = pipeline.destination_connection
+        dst_cfg = enc.decrypt_config(dst_conn.config_encrypted)
+        final_dst = {**dst_cfg, **(pipeline.destination_config or {})}
+        destination = ConnectorFactory.create_destination(dst_conn.connector_type.value, final_dst)
+
+        return source, destination
+
+    except Exception as e:
+        logger.exception("connector_creation_failed", error=str(e))
+        return None, None
+
+
+# ---------------------------------------------------------------------------
+# PROCESSORS
+# ---------------------------------------------------------------------------
+def _build_processors(db: Session, pipeline: Pipeline) -> Optional[List[BaseProcessor]]:
+    try:
+        processors: List[BaseProcessor] = []
+        cfg = pipeline.transform_config or {}
+
+        # New-style 'transformers' list that may reference stored Transformer records
+        if isinstance(cfg, dict) and "transformers" in cfg:
+            for item in cfg["transformers"]:
+                transformer_id = item.get("transformer_id")
+                override = item.get("config_override", {}) or {}
+
+                if transformer_id:
+                    t = db.query(Transformer).filter_by(id=transformer_id).first()
+                    if not t:
+                        logger.warning("transformer_not_found", transformer_id=transformer_id)
+                        continue
+                    type_ = t.type
+                    cfg_ = {**(t.config or {}), **override}
+                else:
+                    type_ = item.get("type", "noop")
+                    cfg_ = item.get("config", {})
+
+                cls = get_processor_class(type_)
+                processors.append(cls(**cfg_))
+
+        # Legacy single-processor config
+        elif isinstance(cfg, dict) and "processor_type" in cfg:
+            cls = get_processor_class(cfg["processor_type"])
+            processors.append(cls(**cfg.get("config", {})))
+
+        logger.info("processors_loaded", count=len(processors))
+        return processors
+
+    except Exception as e:
+        logger.exception("processor_init_failed", error=str(e))
+        return None
+
+
+# ---------------------------------------------------------------------------
+# STATE LOADING & SAVING
+# ---------------------------------------------------------------------------
+def _load_state(db: Session, pipeline: Pipeline) -> Optional[Dict[str, Any]]:
+    if pipeline.sync_mode != "incremental":
+        return None
+
+    st = db.query(PipelineState).filter_by(pipeline_id=pipeline.id).first()
+    return st.state_data if st else None
+
+
+def _save_state(db: Session, pipeline: Pipeline, result: PipelineResult) -> None:
+    """
+    Persist incremental state after successful run.
+    """
+    written = result.metrics.records_written if result and result.metrics else 0
+
+    next_state = {
+        "last_synced_at": datetime.now(UTC).isoformat(),
+        "records_written": written,
+    }
+
+    st = db.query(PipelineState).filter_by(pipeline_id=pipeline.id).first()
+
+    try:
+        if st:
+            st.state_data = next_state
+            st.last_record_count = written
+            st.total_records_synced = (st.total_records_synced or 0) + written
+        else:
+            st = PipelineState(
+                pipeline_id=pipeline.id,
+                state_data=next_state,
+                last_record_count=written,
+                total_records_synced=written,
+            )
+            db.add(st)
+        db.commit()
+    except Exception:
+        db.rollback()
+        logger.exception("pipeline_state_save_failed", pipeline_id=pipeline.id)
+
+
+# ---------------------------------------------------------------------------
+# RESULT HANDLERS
+# ---------------------------------------------------------------------------
+def _on_success(
+    db: Session,
+    pipeline: Pipeline,
+    run: PipelineRun,
+    result: PipelineResult,
+    job_id: int,
+):
+    try:
+        run.status = PipelineRunStatus.COMPLETED
+        run.completed_at = datetime.now(UTC)
+        run.duration_seconds = result.metrics.duration_seconds if result.metrics else None
+
+        # Persist totals (if engine collected them)
+        if result.metrics:
+            run.total_extracted = result.metrics.records_read
+            run.total_transformed = result.metrics.records_processed
+            run.total_loaded = result.metrics.records_written
+            run.total_failed = result.metrics.records_failed
+
+        db.commit()
+    except Exception:
+        db.rollback()
+        logger.exception("pipeline_run_update_failed_on_success", pipeline_run_id=getattr(run, "id", None))
+
+    # Save incremental state if incremental pipeline
+    try:
+        _save_state(db, pipeline, result)
+    except Exception:
+        logger.exception("save_state_failed_on_success", pipeline_id=pipeline.id)
+
+    # Update job and record a success message
+    try:
+        JobService.update_job_status(db, job_id, JobStatus.SUCCESS)
         JobService.log_message(
             db,
             job_id,
             "INFO",
-            f"Starting pipeline execution: {pipeline.name}",
+            f"Success: {result.metrics.records_written if result.metrics else 0} records transferred",
         )
-        
-        logger.info(
-            "pipeline_execution_started",
-            job_id=job_id,
-            pipeline_id=pipeline.id,
-            pipeline_name=pipeline.name,
-        )
-        
-        # Step 4: Create connectors
-        source, destination = _create_connectors(db, job_id, pipeline)
-        if not source or not destination:
-            return {"status": "failed", "error": "Connector creation failed"}
-        
-        # Step 5: Create processors
-        processors = _create_processors(db, job_id, pipeline)
-        if processors is None:
-            return {"status": "failed", "error": "Processor creation failed"}
-        
-        # Step 6: Get incremental state
-        current_state = _get_pipeline_state(db, pipeline)
-        
-        # Step 7: Execute pipeline
-        result = _execute_pipeline(
-            db=db,
-            job_id=job_id,
-            pipeline=pipeline,
-            source=source,
-            destination=destination,
-            processors=processors,
-            state=current_state,
-        )
-        
-        # Step 8: Handle result
-        if result.status == "success":
-            _handle_success(db, job_id, pipeline, result)
-            return result.to_dict()
-        else:
-            _handle_failure(db, job_id, pipeline, result)
-            return result.to_dict()
-            
-    except Exception as e:
-        error_msg = f"Unexpected worker error: {e}"
-        
-        logger.error(
-            "pipeline_job_failed",
-            job_id=job_id,
-            error=str(e),
-            error_type=e.__class__.__name__,
-            exc_info=True,
-        )
-        
-        JobService.update_job_status(db, job_id, JobStatus.FAILED, error_message=error_msg)
-        
-        if pipeline:
-            AlertService.trigger_job_failure_alert(db, job_id, pipeline.id, error_msg)
-        else:
-            AlertService.trigger_generic_alert(db, job_id, error_msg)
-        
-        return {"status": "failed", "error": error_msg}
-        
-    finally:
-        db.close()
+    except Exception:
+        logger.exception("job_update_failed_on_success", job_id=job_id)
+
+    logger.info("pipeline_run_successful", pipeline_run_id=run.id)
 
 
-# ===================================================================
-# Helper Functions
-# ===================================================================
-
-def _get_master_password() -> str:
-    """Get master password from environment.
-    
-    Returns:
-        Master password string
-        
-    Raises:
-        EncryptionError: If master password not set
-    """
-    settings.validate_master_password()
-    
-    return settings.MASTER_PASSWORD
-
-
-def _initialize_encryption(db: Session, job_id: int, master_password: str) -> bool:
-    """Initialize encryption service.
-    
-    Args:
-        db: Database session
-        job_id: Job ID for error logging
-        master_password: Master password
-        
-    Returns:
-        True if successful, False otherwise
-    """
-    try:
-        salt_config = db.query(SystemConfig).filter(
-            SystemConfig.key == "dek_salt"
-        ).first()
-        
-        dek_config = db.query(SystemConfig).filter(
-            SystemConfig.key == "encrypted_dek"
-        ).first()
-
-        if not salt_config or not dek_config:
-            error_msg = "System not initialized (missing salt/DEK)"
-            logger.error("encryption_config_missing")
-            JobService.update_job_status(db, job_id, JobStatus.FAILED, error_message=error_msg)
-            return False
-
-        initialize_encryption_service(
-            dek_config.value,
-            master_password,
-            salt_config.value,
-        )
-        
-        logger.debug("encryption_service_initialized")
-        return True
-        
-    except Exception as e:
-        error_msg = f"Failed to unlock encryption: {e}"
-        
-        logger.error(
-            "encryption_initialization_failed",
-            error=str(e),
-            exc_info=True,
-        )
-        
-        JobService.update_job_status(db, job_id, JobStatus.FAILED, error_message=error_msg)
-        return False
-
-
-def _create_connectors(
-    db,
-    job_id: int,
+def _on_failure(
+    db: Session,
     pipeline: Pipeline,
-) -> Tuple[Optional[SourceConnector], Optional[DestinationConnector]]:
-    """Create source and destination connectors.
-    
-    Args:
-        db: Database session
-        job_id: Job ID for error logging
-        pipeline: Pipeline object
-        
-    Returns:
-        Tuple of (source, destination) or (None, None) on error
-    """
-    try:
-        encryption_service = get_encryption_service()
-        
-        # Create source connector
-        logger.debug(
-            "creating_source_connector",
-            connector_type=pipeline.source_connection.connector_type.value,
-        )
-        
-        source_conn = pipeline.source_connection
-        source_config = encryption_service.decrypt_config(source_conn.config_encrypted)
-        full_source_config = {**source_config, **pipeline.source_config}
-        
-        source = ConnectorFactory.create_source(
-            source_conn.connector_type.value,
-            full_source_config,
-        )
-        
-        logger.info(
-            "source_connector_created",
-            connector_type=source_conn.connector_type.value,
-        )
-        
-        # Create destination connector
-        logger.debug(
-            "creating_destination_connector",
-            connector_type=pipeline.destination_connection.connector_type.value,
-        )
-        
-        dest_conn = pipeline.destination_connection
-        dest_config = encryption_service.decrypt_config(dest_conn.config_encrypted)
-        full_dest_config = {**dest_config, **pipeline.destination_config}
-        
-        destination = ConnectorFactory.create_destination(
-            dest_conn.connector_type.value,
-            full_dest_config,
-        )
-        
-        logger.info(
-            "destination_connector_created",
-            connector_type=dest_conn.connector_type.value,
-        )
-        
-        return source, destination
-        
-    except Exception as e:
-        error_msg = f"Failed to create connectors: {e}"
-        
-        logger.error(
-            "connector_creation_failed",
-            error=str(e),
-            exc_info=True,
-        )
-        
-        JobService.update_job_status(db, job_id, JobStatus.FAILED, error_message=error_msg)
-        AlertService.trigger_job_failure_alert(db, job_id, pipeline.id, error_msg)
-        
-        return None, None
-
-
-def _create_processors(
-    db,
-    job_id: int,
-    pipeline: Pipeline,
-) -> Optional[list[BaseProcessor]]:
-    """Create data processors from pipeline config.
-    
-    Supports two config formats:
-    1. Legacy: `transform_config` = {"processor_type": "...", "config": ...}
-    2. New: `transform_config` = {"transformers": [{"transformer_id": 1, "override": {}}, ...]}
-    """
-    try:
-        processors = []
-        config = pipeline.transform_config or {}
-
-        # CASE 1: New format (List of Transformers)
-        if "transformers" in config and isinstance(config["transformers"], list):
-            for item in config["transformers"]:
-                # Handle both object with ID and direct string/config (future proofing)
-                transformer_id = item.get("transformer_id")
-                override_config = item.get("config_override", {})
-                
-                if transformer_id:
-                    # Fetch from DB
-                    transformer_def = db.query(Transformer).filter(Transformer.id == transformer_id).first()
-                    if not transformer_def:
-                        logger.warning("transformer_not_found", transformer_id=transformer_id)
-                        continue
-                    
-                    proc_type = transformer_def.type
-                    merged_config = {**transformer_def.config, **override_config}
-                else:
-                    # Ad-hoc definition (fallback)
-                    proc_type = item.get("type", "noop")
-                    merged_config = item.get("config", {})
-
-                # Instantiate
-                processor_class = get_processor_class(proc_type)
-                if not processor_class:
-                    logger.warning("unknown_processor_type", type=proc_type)
-                    continue
-                
-                processors.append(processor_class(**merged_config))
-
-        # CASE 2: Legacy format (Single Processor)
-        elif "processor_type" in config:
-            proc_type = config["processor_type"]
-            proc_config = config.get("config", {})
-            
-            processor_class = get_processor_class(proc_type)
-            if processor_class:
-                processors.append(processor_class(**proc_config))
-        
-        logger.info(
-            "processors_created",
-            count=len(processors),
-            job_id=job_id
-        )
-        
-        return processors
-        
-    except Exception as e:
-        error_msg = f"Failed to create processors: {e}"
-        
-        logger.error(
-            "processor_creation_failed",
-            error=str(e),
-            exc_info=True,
-        )
-        
-        JobService.update_job_status(db, job_id, JobStatus.FAILED, error_message=error_msg)
-        return None
-
-
-def _get_pipeline_state(db, pipeline: Pipeline) -> Optional[Dict[str, Any]]:
-    """Get current pipeline state for incremental sync.
-    
-    Args:
-        db: Database session
-        pipeline: Pipeline object
-        
-    Returns:
-        State dictionary or None
-    """
-    if pipeline.sync_mode != "incremental":
-        return None
-    
-    try:
-        pipeline_state_record = (
-            db.query(PipelineState)
-            .filter(PipelineState.pipeline_id == pipeline.id)
-            .first()
-        )
-        
-        if pipeline_state_record and pipeline_state_record.state_data:
-            logger.info(
-                "pipeline_state_loaded",
-                pipeline_id=pipeline.id,
-                state_data=pipeline_state_record.state_data,
-            )
-            return pipeline_state_record.state_data
-        else:
-            logger.info(
-                "no_previous_state",
-                pipeline_id=pipeline.id,
-            )
-            return None
-            
-    except Exception as e:
-        logger.warning(
-            "state_retrieval_failed",
-            pipeline_id=pipeline.id,
-            error=str(e),
-        )
-        return None
-
-
-def _execute_pipeline(
-    db,
-    job_id: int,
-    pipeline: Pipeline,
-    source: SourceConnector,
-    destination: DestinationConnector,
-    processors: list[BaseProcessor],
-    state: Optional[Dict[str, Any]],
-) -> PipelineResult:
-    """Execute the pipeline.
-    
-    Args:
-        db: Database session
-        job_id: Job ID
-        pipeline: Pipeline object
-        source: Source connector
-        destination: Destination connector
-        processors: List of processors
-        state: Incremental state
-        
-    Returns:
-        PipelineResult object
-    """
-    stream = pipeline.source_config.get("table_name")
-    query = pipeline.source_config.get("query")
-    
-    logger.info(
-        "executing_pipeline",
-        stream=stream,
-        sync_mode=pipeline.sync_mode,
-        has_query=query is not None,
-    )
-    
-    # Create pipeline engine
-    engine = PipelineEngine(source, destination, processors)
-    
-    # Run pipeline
-    result = engine.run(
-        stream=stream,
-        state=state,
-        query=query,
-    )
-    
-    return result
-
-
-def _handle_success(
-    db,
-    job_id: int,
-    pipeline: Pipeline,
+    run: PipelineRun,
     result: PipelineResult,
-) -> None:
-    """Handle successful pipeline execution.
-    
-    Args:
-        db: Database session
-        job_id: Job ID
-        pipeline: Pipeline object
-        result: Pipeline result
-    """
-    records_count = result.metrics.records_written
-    
-    # Update job statistics
-    job = JobService.get_job(db, job_id)
-    if job:
-        job.records_extracted = result.metrics.records_read
-        job.records_loaded = result.metrics.records_written
-        job.records_failed = result.metrics.records_failed
-        db.commit()
-    
-    # Save state for incremental sync
-    if pipeline.sync_mode == "incremental":
-        _save_pipeline_state(db, pipeline, records_count)
-    
-    # Update job status
-    JobService.log_message(
-        db,
-        job_id,
-        "INFO",
-        f"Successfully transferred {records_count} records",
-    )
-    
-    JobService.update_job_status(db, job_id, JobStatus.SUCCESS)
-    
-    logger.info(
-        "pipeline_execution_succeeded",
-        job_id=job_id,
-        pipeline_id=pipeline.id,
-        **result.metrics.to_dict(),
-    )
-
-
-def _handle_failure(
-    db,
     job_id: int,
-    pipeline: Pipeline,
-    result: PipelineResult,
-) -> None:
-    """Handle failed pipeline execution.
-    
-    Args:
-        db: Database session
-        job_id: Job ID
-        pipeline: Pipeline object
-        result: Pipeline result
-    """
-    error_msg = result.error or "Unknown error"
-    
-    JobService.log_message(
-        db,
-        job_id,
-        "ERROR",
-        f"Pipeline execution failed: {error_msg}",
-    )
-    
-    JobService.update_job_status(db, job_id, JobStatus.FAILED, error_message=error_msg)
-    AlertService.trigger_job_failure_alert(db, job_id, pipeline.id, error_msg)
-    
-    logger.error(
-        "pipeline_execution_failed",
-        job_id=job_id,
-        pipeline_id=pipeline.id,
-        error=error_msg,
-        **result.metrics.to_dict(),
-    )
-
-
-def _save_pipeline_state(db, pipeline: Pipeline, record_count: int) -> None:
-    """Save updated pipeline state after successful sync.
-    
-    Args:
-        db: Database session
-        pipeline: Pipeline object
-        record_count: Number of records processed
-    """
+):
     try:
-        new_state_data = {
-            "last_synced_at": datetime.now(UTC).isoformat(),
-            "record_count": record_count,
-        }
-        
-        pipeline_state_record = (
-            db.query(PipelineState)
-            .filter(PipelineState.pipeline_id == pipeline.id)
-            .first()
-        )
-        
-        if pipeline_state_record:
-            # Update existing state
-            pipeline_state_record.state_data = new_state_data
-            pipeline_state_record.last_record_count = record_count
-            pipeline_state_record.total_records_synced += record_count
-            
-            logger.debug(
-                "pipeline_state_updated",
-                pipeline_id=pipeline.id,
-            )
-        else:
-            # Create new state record
-            pipeline_state_record = PipelineState(
-                pipeline_id=pipeline.id,
-                state_data=new_state_data,
-                last_record_count=record_count,
-                total_records_synced=record_count,
-            )
-            db.add(pipeline_state_record)
-            
-            logger.debug(
-                "pipeline_state_created",
-                pipeline_id=pipeline.id,
-            )
-        
+        run.status = PipelineRunStatus.FAILED
+        run.error_message = result.error
+        run.completed_at = datetime.now(UTC)
+        run.duration_seconds = result.metrics.duration_seconds if result.metrics else None
+
+        if result.metrics:
+            run.total_extracted = result.metrics.records_read
+            run.total_transformed = result.metrics.records_processed
+            run.total_loaded = result.metrics.records_written
+            run.total_failed = result.metrics.records_failed
+
         db.commit()
-        
-        logger.info(
-            "pipeline_state_saved",
-            pipeline_id=pipeline.id,
-            last_synced_at=new_state_data["last_synced_at"],
-        )
-        
-    except Exception as e:
-        logger.warning(
-            "pipeline_state_save_failed",
-            pipeline_id=pipeline.id,
-            error=str(e),
-        )
+    except Exception:
         db.rollback()
+        logger.exception("pipeline_run_update_failed_on_failure", pipeline_run_id=getattr(run, "id", None))
+
+    try:
+        JobService.update_job_status(db, job_id, JobStatus.FAILED, error_message=result.error)
+    except Exception:
+        logger.exception("job_update_failed_on_failure", job_id=job_id)
+
+    try:
+        AlertService.trigger_job_failure_alert(db, job_id, pipeline.id, result.error)
+    except Exception:
+        logger.exception("alert_trigger_failed_on_failure", pipeline_id=pipeline.id)
+
+    logger.error("pipeline_run_failed", pipeline_run_id=run.id, error=result.error)
+
+
+# ---------------------------------------------------------------------------
+# HELPERS
+# ---------------------------------------------------------------------------
+def _failed_response(msg: str) -> Dict[str, Any]:
+    return {"status": "failed", "error": msg}

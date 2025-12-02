@@ -1,117 +1,166 @@
+"""
+Connector configuration schemas (clean, strict, and modern)
+
+These Pydantic models:
+✓ Validate all connector configs
+✓ Provide default batch_size
+✓ Support aliasing (schema → schema_)
+✓ Remain extensible for encryption, secrets, validation hooks
+✓ Work seamlessly with ConnectorFactory + ConnectionCreate
+"""
+
 from typing import Any, Dict, List, Literal, Optional
+from pydantic import BaseModel, Field, SecretStr, model_validator
 
-from pydantic import BaseModel, Field, SecretStr
 
-
+# ================================================================
+# BASE CONFIG
+# ================================================================
 class BaseConnectorConfig(BaseModel):
-    """Base configuration for all connectors"""
-    batch_size: int = Field(default=1000, description="Number of records to process per batch")
+    """
+    Base class for all connector configs.
+    - batch_size is common across ALL connectors.
+    - extra fields allowed (pipeline may inject overrides).
+    """
+
+    batch_size: int = Field(
+        default=1000,
+        ge=1,
+        description="Number of records to process per batch",
+    )
 
     class Config:
         extra = "allow"
+        validate_assignment = True
 
 
+# ================================================================
+# SQL CONNECTORS
+# ================================================================
 class PostgresConfig(BaseConnectorConfig):
-    """Configuration for PostgreSQL connector"""
-    host: str = Field(..., description="Database host address")
-    port: int = Field(default=5432, description="Database port")
-    user: str = Field(..., description="Database username")
-    password: SecretStr = Field(..., description="Database password")
-    database: str = Field(..., description="Database name")
-    schema_: str = Field(default="public", alias="schema", description="Database schema")
+    host: str
+    port: int = 5432
+    user: str
+    password: SecretStr
+    database: str
+    schema_: str = Field("public", alias="schema")
 
     class Config:
         populate_by_name = True
 
 
 class MySQLConfig(BaseConnectorConfig):
-    """Configuration for MySQL connector"""
-    host: str = Field(..., description="Database host address")
-    port: int = Field(default=3306, description="Database port")
-    user: str = Field(..., description="Database username")
-    password: SecretStr = Field(..., description="Database password")
-    database: str = Field(..., description="Database name")
+    host: str
+    port: int = 3306
+    user: str
+    password: SecretStr
+    database: str
 
 
 class MSSQLConfig(BaseConnectorConfig):
-    """Configuration for MSSQL connector"""
-    host: str = Field(..., description="Database host address")
-    port: int = Field(default=1433, description="Database port")
-    user: str = Field(..., description="Database username")
-    password: SecretStr = Field(..., description="Database password")
-    database: str = Field(..., description="Database name")
+    host: str
+    port: int = 1433
+    user: str
+    password: SecretStr
+    database: str
 
 
 class OracleConfig(BaseConnectorConfig):
-    """Configuration for Oracle connector"""
-    user: str = Field(..., description="Database username")
-    password: SecretStr = Field(..., description="Database password")
-    dsn: str = Field(..., description="Oracle Data Source Name (DSN)")
+    user: str
+    password: SecretStr
+    dsn: str
 
 
 class SQLiteConfig(BaseConnectorConfig):
-    """Configuration for SQLite connector"""
-    database_path: str = Field(..., description="Path to SQLite database file")
+    database_path: str
 
 
+# ================================================================
+# NOSQL / DOCUMENT
+# ================================================================
 class MongoDBConfig(BaseConnectorConfig):
-    """Configuration for MongoDB connector"""
-    host: str = Field(..., description="MongoDB host address")
-    port: int = Field(default=27017, description="MongoDB port")
-    username: Optional[str] = Field(None, description="MongoDB username")
-    password: Optional[SecretStr] = Field(None, description="MongoDB password")
-    database: str = Field(..., description="Database name")
-    auth_source: Optional[str] = Field(None, description="Authentication database")
+    host: str
+    port: int = 27017
+    username: Optional[str] = None
+    password: Optional[SecretStr] = None
+    database: str
+    auth_source: Optional[str] = None
+
+    @model_validator(mode="after")
+    def validate_auth(self):
+        if (self.username and not self.password) or (self.password and not self.username):
+            raise ValueError("Both username and password must be provided for MongoDB authentication")
+        return self
 
 
+# ================================================================
+# CLOUD WAREHOUSE
+# ================================================================
 class SnowflakeConfig(BaseConnectorConfig):
-    """Configuration for Snowflake connector"""
-    account: str = Field(..., description="Snowflake account identifier")
-    username: str = Field(..., description="Snowflake username")
-    password: SecretStr = Field(..., description="Snowflake password")
-    role: Optional[str] = Field(None, description="User role")
-    warehouse: Optional[str] = Field(None, description="Warehouse to use")
-    database: str = Field(..., description="Database name")
-    schema_: str = Field(..., alias="schema", description="Database schema")
+    account: str
+    username: str
+    password: SecretStr
+    role: Optional[str] = None
+    warehouse: Optional[str] = None
+    database: str
+    schema_: str = Field(..., alias="schema")
 
     class Config:
         populate_by_name = True
 
 
 class BigQueryConfig(BaseConnectorConfig):
-    """Configuration for Google BigQuery connector"""
-    project_id: str = Field(..., description="GCP Project ID")
-    dataset_id: str = Field(..., description="BigQuery Dataset ID")
-    # Note: table_id is typically handled at the pipeline level, but kept flexible if needed.
+    project_id: str
+    dataset_id: str
 
 
+# ================================================================
+# FILE STORAGE CONNECTORS
+# ================================================================
 class S3Config(BaseConnectorConfig):
-    """Configuration for AWS S3 connector"""
-    bucket: str = Field(..., description="S3 bucket name")
-    prefix: Optional[str] = Field(None, description="File path prefix")
-    format: Literal["parquet", "json", "csv", "jsonl"] = Field(default="parquet", description="File format")
-    aws_access_key_id: Optional[str] = Field(None, description="AWS Access Key ID")
-    aws_secret_access_key: Optional[SecretStr] = Field(None, description="AWS Secret Access Key")
-    region: str = Field(default="us-east-1", description="AWS Region")
+    bucket: str
+    prefix: Optional[str] = None
+    format: Literal["parquet", "json", "csv", "jsonl"] = "parquet"
+    aws_access_key_id: Optional[str] = None
+    aws_secret_access_key: Optional[SecretStr] = None
+    region: str = "us-east-1"
+
+    @model_validator(mode="after")
+    def validate_auth(self):
+        if self.aws_access_key_id and not self.aws_secret_access_key:
+            raise ValueError("aws_secret_access_key is required when aws_access_key_id is provided")
+        return self
 
 
 class FileSystemConfig(BaseConnectorConfig):
-    """Configuration for Local File System connector"""
-    file_path: str = Field(..., description="Base path (directory or file)")
-    format: Literal["parquet", "json", "csv", "jsonl"] = Field(default="parquet", description="File format")
-    glob_pattern: str = Field(default="*", description="Glob pattern for file matching")
+    file_path: str
+    format: Literal["parquet", "json", "csv", "jsonl"] = "parquet"
+    glob_pattern: str = "*"
 
 
+# ================================================================
+# SINGER TAP/TARGET
+# ================================================================
 class SingerSourceConfig(BaseConnectorConfig):
-    """Configuration for Singer Source (Tap)"""
-    tap_executable: str = Field(..., description="Path to tap executable (e.g. 'tap-github')")
-    tap_config: Dict[str, Any] = Field(..., description="Singer tap configuration (JSON)")
-    tap_catalog: Optional[Dict[str, Any]] = Field(None, description="Singer catalog (JSON)")
-    select_streams: Optional[List[str]] = Field(None, description="List of streams to select")
+    tap_executable: str
+    tap_config: Dict[str, Any]
+    tap_catalog: Optional[Dict[str, Any]] = None
+    select_streams: Optional[List[str]] = None
+
+    @model_validator(mode="after")
+    def validate_catalog(self):
+        if self.tap_catalog is not None and not isinstance(self.tap_catalog, dict):
+            raise ValueError("tap_catalog must be a JSON object (dict)")
+        return self
 
 
 class SingerDestinationConfig(BaseConnectorConfig):
-    """Configuration for Singer Destination (Target)"""
-    target_executable: str = Field(..., description="Path to target executable (e.g. 'target-jsonl')")
-    target_config: Dict[str, Any] = Field(..., description="Singer target configuration (JSON)")
-    target_catalog: Optional[Dict[str, Any]] = Field(None, description="Singer catalog (JSON)")
+    target_executable: str
+    target_config: Dict[str, Any]
+    target_catalog: Optional[Dict[str, Any]] = None
+
+    @model_validator(mode="after")
+    def validate_catalog(self):
+        if self.target_catalog is not None and not isinstance(self.target_catalog, dict):
+            raise ValueError("target_catalog must be a JSON object (dict)")
+        return self

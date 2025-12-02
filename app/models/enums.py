@@ -1,31 +1,45 @@
 import enum
 
+
+# =============================================================
+# Connectors
+# =============================================================
 class ConnectorType(str, enum.Enum):
+    # SQL
     POSTGRESQL = "postgresql"
     MYSQL = "mysql"
     MSSQL = "mssql"
     ORACLE = "oracle"
-    MONGODB = "mongodb"
-    REDIS = "redis"
     SQLITE = "sqlite"
 
+    # NoSQL
+    MONGODB = "mongodb"
+    REDIS = "redis"
+
+    # Cloud warehouses
     SNOWFLAKE = "snowflake"
     BIGQUERY = "bigquery"
     REDSHIFT = "redshift"
 
+    # File / Storage
     LOCAL_FILE = "local_file"
     S3 = "s3"
     GCS = "gcs"
     AZURE_BLOB = "azure_blob"
 
+    # APIs / Integrations
     REST_API = "rest_api"
     GRAPHQL = "graphql"
     SINGER = "singer"
 
+    # SaaS
     GOOGLE_SHEETS = "google_sheets"
     AIRTABLE = "airtable"
 
 
+# =============================================================
+# Pipeline-level definitions
+# =============================================================
 class PipelineStatus(str, enum.Enum):
     DRAFT = "draft"
     ACTIVE = "active"
@@ -33,6 +47,39 @@ class PipelineStatus(str, enum.Enum):
     ARCHIVED = "archived"
 
 
+class PipelineRunStatus(str, enum.Enum):
+    PENDING = "pending"
+    INITIALIZING = "initializing"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class OperatorRunStatus(str, enum.Enum):
+    PENDING = "pending"
+    RUNNING = "running"
+    SUCCESS = "success"
+    FAILED = "failed"
+
+
+class OperatorType(str, enum.Enum):
+    EXTRACT = "extract"
+    TRANSFORM = "transform"
+    LOAD = "load"
+    CUSTOM = "custom"
+    NOOP = "noop"
+
+
+class DataDirection(str, enum.Enum):
+    SOURCE = "source"
+    DESTINATION = "destination"
+    STAGE = "stage"
+
+
+# =============================================================
+# Jobs
+# =============================================================
 class JobStatus(str, enum.Enum):
     PENDING = "pending"
     RUNNING = "running"
@@ -41,6 +88,16 @@ class JobStatus(str, enum.Enum):
     CANCELLED = "cancelled"
 
 
+class RetryStrategy(str, enum.Enum):
+    NONE = "none"
+    FIXED_INTERVAL = "fixed_interval"
+    EXPONENTIAL = "exponential"
+    CUSTOM = "custom"
+
+
+# =============================================================
+# Alerts
+# =============================================================
 class AlertLevel(str, enum.Enum):
     INFO = "info"
     WARNING = "warning"

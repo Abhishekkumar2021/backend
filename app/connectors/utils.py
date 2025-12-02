@@ -1,122 +1,177 @@
+"""
+Data Type Mapping Utilities
+---------------------------
+
+Centralized type-conversion utilities used by:
+✓ Source connectors (schema discovery)
+✓ Destination connectors (CREATE TABLE)
+✓ Processors
+✓ Pipeline engine
+
+Goals:
+✓ Clean, predictable mappings
+✓ Cross-database compatibility
+✓ Minimize duplicate logic
+"""
+
 from datetime import datetime
-from typing import Any
+from typing import Any, Type
 
 from app.connectors.base import DataType
 
 
-def map_mongo_type_to_data_type(mongo_type: type) -> DataType:
+# =============================================================================
+# MONGO TYPE MAPPER
+# =============================================================================
+def map_mongo_type_to_data_type(py_type: Type[Any]) -> DataType:
     """
-    Maps a MongoDB (Python) type to a standardized DataType enum.
+    Maps Python types returned by MongoDB to internal DataType enum.
     """
-    if mongo_type is str:
+    if py_type is str:
         return DataType.STRING
-    elif mongo_type is int:
+    if py_type is int:
         return DataType.INTEGER
-    elif mongo_type is float:
+    if py_type is float:
         return DataType.FLOAT
-    elif mongo_type is bool:
+    if py_type is bool:
         return DataType.BOOLEAN
-    elif mongo_type is datetime:
+    if py_type is datetime:
         return DataType.DATETIME
-    elif mongo_type is dict or mongo_type is list:
+    if py_type in (dict, list):
         return DataType.JSON
-    elif mongo_type is bytes:
+    if py_type is bytes:
         return DataType.BINARY
-    else:
-        return DataType.STRING # Default to string for unknown types or complex objects
+
+    return DataType.STRING  # Fallback
 
 
+# =============================================================================
+# GENERIC SQL TYPE MAPPER
+# =============================================================================
 def map_sql_type_to_data_type(sql_type: str) -> DataType:
     """
-    Maps a SQL type string to a standardized DataType enum.
-    Covers common types from various SQL databases.
-    """
-    sql_type = sql_type.lower()
-    if "char" in sql_type or "text" in sql_type or "string" in sql_type:
-        return DataType.STRING
-    elif "int" in sql_type or "number" in sql_type and "(" not in sql_type: # Exclude NUMBER(p,s) which can be float
-        return DataType.INTEGER
-    elif "float" in sql_type or "double" in sql_type or "decimal" in sql_type or "numeric" in sql_type:
-        return DataType.FLOAT
-    elif "boolean" in sql_type or "bool" in sql_type:
-        return DataType.BOOLEAN
-    elif "date" == sql_type: # Exact match for date to avoid datetime
-        return DataType.DATE
-    elif "timestamp" in sql_type or "datetime" in sql_type:
-        return DataType.DATETIME
-    elif "json" in sql_type:
-        return DataType.JSON
-    elif "binary" in sql_type or "blob" in sql_type:
-        return DataType.BINARY
-    else:
-        return DataType.STRING # Default for unhandled or complex types
+    Maps SQL column types (MySQL, PostgreSQL, MSSQL, Oracle, SQLite) to DataType.
 
+    Input can be:
+        - "VARCHAR"
+        - "varchar(255)"
+        - "NUMBER(10,2)"
+        - "INT"
+        - "TIMESTAMP WITH TIME ZONE"
+    """
+    t = sql_type.lower().strip()
+
+    # Remove length and precision eg: varchar(255) → varchar
+    base = t.split("(")[0].strip()
+
+    # --- STRING types ---
+    if any(s in base for s in ["char", "text", "string", "uuid"]):
+        return DataType.STRING
+
+    # --- INTEGER types ---
+    # Bug fixed: previous logic had "( " not in sql_type; NUMBER(10,2) is NOT integer.
+    if base in ["int", "integer", "smallint", "tinyint", "mediumint"] or base.endswith("int"):
+        return DataType.INTEGER
+
+    # --- FLOAT/DECIMAL types ---
+    if base in ["float", "double", "real", "decimal", "numeric"]:
+        return DataType.FLOAT
+
+    # --- BOOLEAN ---
+    if base in ["bool", "boolean"]:
+        return DataType.BOOLEAN
+
+    # --- DATES ---
+    if base == "date":
+        return DataType.DATE
+
+    # --- DATETIME/TIMESTAMP ---
+    if "timestamp" in base or "datetime" in base:
+        return DataType.DATETIME
+
+    # --- JSON ---
+    if base == "json":
+        return DataType.JSON
+
+    # --- BINARY ---
+    if any(x in base for x in ["blob", "binary", "varbinary", "bytea"]):
+        return DataType.BINARY
+
+    # Fallback
+    return DataType.STRING
+
+
+# =============================================================================
+# MAP DataType → Generic SQL Type (used by Snowflake, BigQuery, etc.)
+# =============================================================================
 def map_data_type_to_sql_type(data_type: DataType) -> str:
     """
-    Maps a standardized DataType enum to a generic SQL type string.
-    This is used for CREATE TABLE statements.
+    Maps internal DataType to a generic SQL type.
+    Snowflake: TIMESTAMP_NTZ, VARIANT
     """
-    if data_type == DataType.STRING:
-        return "VARCHAR"
-    elif data_type == DataType.INTEGER:
-        return "INT"
-    elif data_type == DataType.FLOAT:
-        return "FLOAT"
-    elif data_type == DataType.BOOLEAN:
-        return "BOOLEAN"
-    elif data_type == DataType.DATE:
-        return "DATE"
-    elif data_type == DataType.DATETIME:
-        return "TIMESTAMP_NTZ" # Snowflake specific for datetime without timezone
-    elif data_type == DataType.JSON:
-        return "VARIANT" # Snowflake specific for JSON
-    elif data_type == DataType.BINARY:
-        return "BINARY"
-    else:
-        return "VARCHAR" # Default to VARCHAR for unhandled types
+    return {
+        DataType.STRING: "VARCHAR",
+        DataType.INTEGER: "INT",
+        DataType.FLOAT: "FLOAT",
+        DataType.BOOLEAN: "BOOLEAN",
+        DataType.DATE: "DATE",
+        DataType.DATETIME: "TIMESTAMP_NTZ",
+        DataType.JSON: "VARIANT",
+        DataType.BINARY: "BINARY",
+    }.get(data_type, "VARCHAR")
 
+
+# =============================================================================
+# BIGQUERY TYPE MAPPER
+# =============================================================================
 def map_bigquery_type_to_data_type(bq_type: str) -> DataType:
     """
-    Maps a BigQuery type string to a standardized DataType enum.
+    Maps BigQuery type names to internal DataType.
     """
-    bq_type = bq_type.upper()
-    if bq_type in ("STRING", "BIGNUMERIC", "NUMERIC"): # BIGNUMERIC/NUMERIC can contain decimal points which can be represented as STRING
-        return DataType.STRING
-    elif bq_type in ("INT64", "INTEGER"):
-        return DataType.INTEGER
-    elif bq_type in ("FLOAT64", "FLOAT"):
-        return DataType.FLOAT
-    elif bq_type == "BOOL":
-        return DataType.BOOLEAN
-    elif bq_type == "DATE":
-        return DataType.DATE
-    elif bq_type in ("DATETIME", "TIMESTAMP"):
-        return DataType.DATETIME
-    elif bq_type == "JSON":
-        return DataType.JSON
-    elif bq_type == "BYTES":
-        return DataType.BINARY
-    else:
-        return DataType.STRING # Default for unhandled or complex types
+    t = bq_type.upper()
 
+    if t in ["STRING"]:
+        return DataType.STRING
+    if t in ["INT64", "INTEGER"]:
+        return DataType.INTEGER
+    if t in ["FLOAT64", "FLOAT"]:
+        return DataType.FLOAT
+    if t == "BOOL":
+        return DataType.BOOLEAN
+    if t == "DATE":
+        return DataType.DATE
+    if t in ["DATETIME", "TIMESTAMP"]:
+        return DataType.DATETIME
+    if t == "JSON":
+        return DataType.JSON
+    if t == "BYTES":
+        return DataType.BINARY
+
+    return DataType.STRING
+
+
+# =============================================================================
+# SINGER TYPE MAPPER
+# =============================================================================
 def map_singer_type_to_data_type(singer_type: str) -> DataType:
     """
-    Maps a Singer.io type string (from schema) to a standardized DataType enum.
+    Maps Singer spec types to internal DataType enum.
     """
-    if singer_type == "string":
+    t = singer_type.lower()
+
+    if t == "string":
         return DataType.STRING
-    elif singer_type == "integer":
+    if t == "integer":
         return DataType.INTEGER
-    elif singer_type == "number": # Float or Decimal
+    if t == "number":
         return DataType.FLOAT
-    elif singer_type == "boolean":
+    if t == "boolean":
         return DataType.BOOLEAN
-    elif singer_type == "date":
+    if t == "date":
         return DataType.DATE
-    elif singer_type == "datetime":
+    if t == "datetime":
         return DataType.DATETIME
-    elif singer_type == "object" or singer_type == "array":
+    if t in ["object", "array"]:
         return DataType.JSON
-    # Singer doesn't have a direct 'binary' type, map to string
-    else:
-        return DataType.STRING
+
+    return DataType.STRING
