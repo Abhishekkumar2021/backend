@@ -3,15 +3,15 @@
 Handles system initialization, master password management, and system status.
 """
 
-from typing import Dict, Any
+from typing import Dict
 
 from fastapi import APIRouter, HTTPException, status
-from pydantic import BaseModel, Field
 
 from app.core.database import get_db_session
-from app.core.exceptions import EncryptionError, InvalidMasterPasswordError
+from app.core.exceptions import InvalidMasterPasswordError
 from app.core.logging import get_logger
 from app.models.database import SystemConfig
+from app.schemas.system import InitSystemRequest, InitSystemResponse, SystemStatusResponse
 from app.services.encryption import (
     MasterPasswordManager,
     initialize_encryption_service,
@@ -22,32 +22,6 @@ from app.services.encryption import (
 
 logger = get_logger(__name__)
 router = APIRouter()
-
-
-# ===================================================================
-# Request/Response Models
-# ===================================================================
-
-class InitSystemRequest(BaseModel):
-    """Request model for system initialization."""
-    master_password: str = Field(
-        ...,
-        min_length=8,
-        description="Master password for encryption (minimum 8 characters)",
-    )
-
-
-class InitSystemResponse(BaseModel):
-    """Generic simple response."""
-    message: str
-    status: str
-
-
-class SystemStatusResponse(BaseModel):
-    """Response model for system status."""
-    initialized: bool
-    unlocked: bool
-    message: str
 
 
 # ===================================================================

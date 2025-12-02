@@ -1,44 +1,18 @@
 """Transformer Management API Endpoints."""
 
-from typing import List, Dict, Any, Optional
+from typing import List, Dict
 
 from fastapi import APIRouter, HTTPException, status
-from pydantic import BaseModel, Field
 
 from app.core.database import get_db_session
 from app.models.database import Transformer
 from app.pipeline.processors.registry import list_processor_types
 from app.core.logging import get_logger
+from app.schemas.transformer import TransformerCreate, TransformerUpdate, TransformerSchema
 
 
 logger = get_logger(__name__)
 router = APIRouter()
-
-
-# ===================================================================
-# Schemas
-# ===================================================================
-
-class TransformerCreate(BaseModel):
-    name: str = Field(..., min_length=1)
-    type: str = Field(..., min_length=1)
-    config: Dict[str, Any] = Field(default_factory=dict)
-
-
-class TransformerUpdate(BaseModel):
-    name: Optional[str] = None
-    config: Optional[Dict[str, Any]] = None
-
-
-class TransformerSchema(BaseModel):
-    id: int
-    name: str
-    type: str
-    config: Dict[str, Any]
-    created_at: Any
-
-    class Config:
-        from_attributes = True
 
 
 # ===================================================================

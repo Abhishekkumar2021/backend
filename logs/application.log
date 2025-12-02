@@ -325,3 +325,6 @@ AttributeError: type object 'ConnectorFactory' has no attribute 'list_sources'
 2 changes detected
 [2m2025-12-02T15:01:18.935199Z[0m [[32m[1minfo     [0m] [1mpostgres_connected            [0m [36mdatabase[0m=[35mdata_agent_system[0m [36mhost[0m=[35mlocalhost[0m
 [2m2025-12-02T15:01:27.943973Z[0m [[32m[1minfo     [0m] [1mtransformer_list_retrieved    [0m [36mcount[0m=[35m0[0m
+360 changes detected
+[2m2025-12-02T15:02:57.726255Z[0m [[32m[1minfo     [0m] [1mapplication_shutting_down     [0m [36mmessage[0m=[35m'Graceful shutdown initiated'[0m
+[2m2025-12-02T15:02:57.728411Z[0m [[32m[1minfo     [0m] [1mapplication_shutdown_complete [0m [36mmessage[0m=[35m'All services stopped'[0m
