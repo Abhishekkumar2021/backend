@@ -242,3 +242,17 @@ class Alert(Base):
     alert_config = relationship("AlertConfig")
     job = relationship("Job", back_populates="alerts")
     pipeline = relationship("Pipeline", back_populates="alerts")
+
+
+class Transformer(Base):
+    """Stores configured data transformers."""
+
+    __tablename__ = "transformers"
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String(255), nullable=False, unique=True, index=True)
+    type = Column(String(100), nullable=False)  # e.g., "noop", "filter"
+    config = Column(JSON, nullable=False, default=dict)
+    
+    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
+    updated_at = Column(DateTime, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC))

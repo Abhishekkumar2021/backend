@@ -11,13 +11,11 @@ from app.connectors.base import ConnectorFactory
 from app.connectors.base import SourceConnector, DestinationConnector
 from app.core.database import SessionLocal
 from app.core.logging import get_logger
-from app.models.database import Pipeline, SystemConfig, PipelineState
+from app.models.database import Pipeline, SystemConfig, PipelineState, Transformer
 from app.models.enums import JobStatus
 from app.pipeline.engine import PipelineEngine, PipelineResult
 from app.pipeline.processors.base import BaseProcessor
-from app.pipeline.processors.noop import NoOpProcessor
-from app.pipeline.processors.sql import DuckDBProcessor
-from app.pipeline.processors.transformer import ExampleTransformerProcessor
+from app.pipeline.processors.registry import get_processor_class
 from app.services.alert import AlertService
 from app.services.encryption import get_encryption_service, initialize_encryption_service
 from app.services.job import JobService
@@ -25,13 +23,6 @@ from app.worker.app import celery_app
 from app.core.config import settings
 
 logger = get_logger(__name__)
-
-# Processor registry - maps processor names to classes
-PROCESSOR_REGISTRY: Dict[str, type[BaseProcessor]] = {
-    "noop": NoOpProcessor,
-    "example_transformer": ExampleTransformerProcessor,
-    "duckdb_sql_transformer": DuckDBProcessor,
-}
 
 
 @celery_app.task(
@@ -310,53 +301,62 @@ def _create_processors(
 ) -> Optional[list[BaseProcessor]]:
     """Create data processors from pipeline config.
     
-    Args:
-        db: Database session
-        job_id: Job ID for error logging
-        pipeline: Pipeline object
-        
-    Returns:
-        List of processors or None on error
+    Supports two config formats:
+    1. Legacy: `transform_config` = {"processor_type": "...", "config": ...}
+    2. New: `transform_config` = {"transformers": [{"transformer_id": 1, "override": {}}, ...]}
     """
     try:
-        processor_name = (
-            pipeline.transform_config.get("processor_type", "noop")
-            if pipeline.transform_config
-            else "noop"
-        )
-        
-        processor_class = PROCESSOR_REGISTRY.get(processor_name)
-        
-        if not processor_class:
-            error_msg = f"Unknown processor type: {processor_name}"
+        processors = []
+        config = pipeline.transform_config or {}
+
+        # CASE 1: New format (List of Transformers)
+        if "transformers" in config and isinstance(config["transformers"], list):
+            for item in config["transformers"]:
+                # Handle both object with ID and direct string/config (future proofing)
+                transformer_id = item.get("transformer_id")
+                override_config = item.get("config_override", {})
+                
+                if transformer_id:
+                    # Fetch from DB
+                    transformer_def = db.query(Transformer).filter(Transformer.id == transformer_id).first()
+                    if not transformer_def:
+                        logger.warning("transformer_not_found", transformer_id=transformer_id)
+                        continue
+                    
+                    proc_type = transformer_def.type
+                    merged_config = {**transformer_def.config, **override_config}
+                else:
+                    # Ad-hoc definition (fallback)
+                    proc_type = item.get("type", "noop")
+                    merged_config = item.get("config", {})
+
+                # Instantiate
+                processor_class = get_processor_class(proc_type)
+                if not processor_class:
+                    logger.warning("unknown_processor_type", type=proc_type)
+                    continue
+                
+                processors.append(processor_class(**merged_config))
+
+        # CASE 2: Legacy format (Single Processor)
+        elif "processor_type" in config:
+            proc_type = config["processor_type"]
+            proc_config = config.get("config", {})
             
-            logger.error(
-                "unknown_processor_type",
-                processor_type=processor_name,
-                available_processors=list(PROCESSOR_REGISTRY.keys()),
-            )
-            
-            JobService.update_job_status(db, job_id, JobStatus.FAILED, error_message=error_msg)
-            AlertService.trigger_job_failure_alert(db, job_id, pipeline.id, error_msg)
-            return None
-        
-        processor_config = (
-            pipeline.transform_config.get("config", {})
-            if pipeline.transform_config
-            else {}
-        )
-        
-        processor = processor_class(**processor_config)
+            processor_class = get_processor_class(proc_type)
+            if processor_class:
+                processors.append(processor_class(**proc_config))
         
         logger.info(
-            "processor_created",
-            processor_type=processor_name,
+            "processors_created",
+            count=len(processors),
+            job_id=job_id
         )
         
-        return [processor]
+        return processors
         
     except Exception as e:
-        error_msg = f"Failed to create processor: {e}"
+        error_msg = f"Failed to create processors: {e}"
         
         logger.error(
             "processor_creation_failed",

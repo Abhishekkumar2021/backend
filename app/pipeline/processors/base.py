@@ -1,25 +1,41 @@
-"""Data Processors for Pipeline Engine
-This module contains various data processing utilities that can be applied
-between the source extraction and destination loading phases of a pipeline.
-"""
+"""Base class for data processors."""
 
-from collections.abc import Iterator
+from typing import Optional, Iterator
 from app.connectors.base import Record
 
 
 class BaseProcessor:
-    """Base class for all data processors."""
+    """Base class for all data processors.
+    
+    Processors are responsible for transforming, filtering, or validating
+    records as they move from source to destination.
+    
+    The architecture relies on Iterator chaining.
+    """
 
     def process(self, records: Iterator[Record]) -> Iterator[Record]:
         """
-        Processes an iterator of records and yields transformed records.
+        Process a stream of records.
+        
+        Args:
+            records: Iterator of input records
+            
+        Yields:
+            Transformed records.
         """
         for record in records:
-            yield self.transform_record(record)
+            result = self.transform_record(record)
+            if result is not None:
+                yield result
 
-    def transform_record(self, record: Record) -> Record:
+    def transform_record(self, record: Record) -> Optional[Record]:
         """
-        Applies transformations to a single record.
-        This method should be overridden by concrete processor implementations.
+        Process a single record. Override this for simple row-level transformations.
+        
+        Args:
+            record: The input record to process
+            
+        Returns:
+            The transformed record, or None if the record should be dropped.
         """
         return record

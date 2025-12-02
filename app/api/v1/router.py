@@ -3,7 +3,7 @@
 
 from fastapi import APIRouter
 
-from app.api.v1.endpoints import connections, jobs, metadata, pipelines, system, websocket, alerts
+from app.api.v1.endpoints import connections, jobs, metadata, pipelines, system, websocket, alerts, transformers
 
 api_router = APIRouter()
 
@@ -15,6 +15,9 @@ api_router.include_router(connections.router, prefix="/connections", tags=["conn
 
 # Metadata scanning
 api_router.include_router(metadata.router, prefix="/metadata", tags=["metadata"])
+
+# Transformer management
+api_router.include_router(transformers.router, prefix="/transformers", tags=["transformers"])
 
 # Pipeline management
 api_router.include_router(pipelines.router, prefix="/pipelines", tags=["pipelines"])

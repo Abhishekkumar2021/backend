@@ -387,10 +387,7 @@ class PipelineEngine:
         source_iterator: Iterator[Record],
         metrics: PipelineMetrics,
     ) -> Iterator[Record]:
-        """Apply processors to source records.
-        
-        This is a generator that processes records one by one and yields
-        transformed records to the destination writer.
+        """Apply processors to source records using iterator chaining.
         
         Args:
             source_iterator: Iterator of source records
@@ -399,82 +396,43 @@ class PipelineEngine:
         Yields:
             Processed Record objects
         """
-        for record in source_iterator:
-            metrics.records_read += 1
-            
-            # Log progress every 1000 records
-            if metrics.records_read % 1000 == 0:
-                logger.debug(
-                    "processing_progress",
-                    records_read=metrics.records_read,
-                    records_filtered=metrics.records_filtered,
-                    records_failed=metrics.records_failed,
+        # 1. Wrap source iterator to count reads
+        def metering_iterator(iterator):
+            for record in iterator:
+                metrics.records_read += 1
+                if metrics.records_read % 1000 == 0:
+                    logger.debug(
+                        "processing_progress",
+                        records_read=metrics.records_read,
+                    )
+                yield record
+
+        # 2. Build the chain
+        current_iterator = metering_iterator(source_iterator)
+        
+        for processor in self.processors:
+            try:
+                current_iterator = processor.process(current_iterator)
+            except Exception as e:
+                logger.error(
+                    "processor_chain_construction_failed",
+                    processor=processor.__class__.__name__,
+                    error=str(e),
                 )
-            
-            # Apply processor chain
-            processed_record = self._process_single_record(record, metrics)
-            
-            # Yield if record passed all processors
-            if processed_record is not None:
-                metrics.records_processed += 1
-                yield processed_record
+                raise
+
+        # 3. Consume the chain and count processed
+        # We iterate here to yield to the writer
+        for record in current_iterator:
+            metrics.records_processed += 1
+            yield record
 
         logger.info(
             "processing_complete",
             records_read=metrics.records_read,
             records_processed=metrics.records_processed,
-            records_filtered=metrics.records_filtered,
-            records_failed=metrics.records_failed,
         )
 
-    def _process_single_record(
-        self,
-        record: Record,
-        metrics: PipelineMetrics,
-    ) -> Optional[Record]:
-        """Process a single record through all processors.
-        
-        Args:
-            record: Input record
-            metrics: Metrics object to update
-            
-        Returns:
-            Processed record or None if filtered/failed
-        """
-        current_record = record
-        
-        # Apply each processor in sequence
-        for processor in self.processors:
-            try:
-                current_record = processor.process(current_record)
-                
-                # Processor returned None = record filtered
-                if current_record is None:
-                    metrics.records_filtered += 1
-                    
-                    logger.debug(
-                        "record_filtered",
-                        processor=processor.__class__.__name__,
-                        stream=record.stream,
-                    )
-                    
-                    return None
-                    
-            except Exception as e:
-                metrics.records_failed += 1
-                
-                logger.error(
-                    "processor_error",
-                    processor=processor.__class__.__name__,
-                    stream=record.stream,
-                    error=str(e),
-                    error_type=e.__class__.__name__,
-                )
-                
-                # Skip this record and continue
-                return None
-        
-        return current_record
 
 
 class PipelineEngineBuilder:
