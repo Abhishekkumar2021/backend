@@ -19,6 +19,7 @@ from app.core.logging import setup_logging, get_logger
 from app.core.exceptions import DataAgentException
 from app.models import database
 from app.services.cache import get_cache
+from app.core.middleware import CorrelationMiddleware
 
 # Initialize structured logging
 setup_logging(
@@ -218,6 +219,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.add_middleware(CorrelationMiddleware)
 
 
 # Custom exception handler for application exceptions

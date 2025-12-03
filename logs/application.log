@@ -328,3 +328,13 @@ AttributeError: type object 'ConnectorFactory' has no attribute 'list_sources'
 360 changes detected
 [2m2025-12-02T15:02:57.726255Z[0m [[32m[1minfo     [0m] [1mapplication_shutting_down     [0m [36mmessage[0m=[35m'Graceful shutdown initiated'[0m
 [2m2025-12-02T15:02:57.728411Z[0m [[32m[1minfo     [0m] [1mapplication_shutdown_complete [0m [36mmessage[0m=[35m'All services stopped'[0m
+[2m2025-12-02T21:19:42.116211Z[0m [[32m[1minfo     [0m] [1mstarting_uvicorn              [0m [36mhost[0m=[35m0.0.0.0[0m [36mport[0m=[35m8000[0m [36mreload[0m=[35mTrue[0m
+[2m2025-12-02T21:19:43.395083Z[0m [[32m[1minfo     [0m] [1mapplication_starting          [0m [36mapi_version[0m=[35m/api/v1[0m [36mapp_name[0m=[35m'Data Agent - Universal ETL'[0m [36menvironment[0m=[35mdevelopment[0m
+[2m2025-12-02T21:19:43.577909Z[0m [[32m[1minfo     [0m] [1mdatabase_initialized          [0m [36mmessage[0m=[35m'All database tables created/verified'[0m
+[2m2025-12-02T21:19:43.578127Z[0m [[32m[1minfo     [0m] [1mdatabase_connected            [0m [36mconnection_string[0m=[35mlocalhost:5432/data_agent_system[0m
+[2m2025-12-02T21:19:43.578213Z[0m [[32m[1minfo     [0m] [1mconnectors_registered         [0m [36mdestination_count[0m=[35m11[0m [36mdestinations[0m=[35m['postgresql', 'mysql', 'mssql', 'oracle', 'sqlite', 'mongodb', 's3', 'snowflake', 'bigquery', 'local_file', 'singer'][0m [36msource_count[0m=[35m11[0m [36msources[0m=[35m['postgresql', 'mysql', 'mssql', 'oracle', 'sqlite', 'mongodb', 's3', 'snowflake', 'bigquery', 'local_file', 'singer'][0m
+[2m2025-12-02T21:19:43.632557Z[0m [[32m[1minfo     [0m] [1mcache_connected               [0m [36mredis_url[0m=[35mredis://localhost:6379/0[0m
+[2m2025-12-02T21:19:43.640996Z[0m [[32m[1minfo     [0m] [1mredis_available               [0m [36mconnected_clients[0m=[35m1[0m [36mmemory_used[0m=[35m1.73M[0m [36mtotal_keys[0m=[35m0[0m
+[2m2025-12-02T21:19:43.641095Z[0m [[32m[1minfo     [0m] [1mapplication_ready             [0m [36mconnectors_registered[0m=[35m{'sources': 11, 'destinations': 11}[0m [36mdatabase[0m=[35mconnected[0m [36mredis[0m=[35m{'available': True, 'memory_used': '1.73M', 'total_keys': 0}[0m
+3 changes detected
+9 changes detected
